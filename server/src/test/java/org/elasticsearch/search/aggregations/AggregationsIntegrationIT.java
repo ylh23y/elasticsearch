@@ -30,7 +30,6 @@ import java.util.List;
 
 import static org.elasticsearch.search.aggregations.AggregationBuilders.terms;
 import static org.elasticsearch.test.hamcrest.ElasticsearchAssertions.assertAcked;
-import static org.elasticsearch.test.hamcrest.ElasticsearchAssertions.assertNoFailures;
 import static org.elasticsearch.test.hamcrest.ElasticsearchAssertions.assertSearchResponse;
 
 
@@ -41,11 +40,11 @@ public class AggregationsIntegrationIT extends ESIntegTestCase {
 
     @Override
     public void setupSuiteScopeCluster() throws Exception {
-        assertAcked(prepareCreate("index").addMapping("type", "f", "type=keyword").get());
+        assertAcked(prepareCreate("index").setMapping("f", "type=keyword").get());
         numDocs = randomIntBetween(1, 20);
         List<IndexRequestBuilder> docs = new ArrayList<>();
         for (int i = 0; i < numDocs; ++i) {
-            docs.add(client().prepareIndex("index", "type").setSource("f", Integer.toString(i / 3)));
+            docs.add(client().prepareIndex("index").setSource("f", Integer.toString(i / 3)));
         }
         indexRandom(true, docs);
     }
@@ -65,7 +64,7 @@ public class AggregationsIntegrationIT extends ESIntegTestCase {
         while (response.getHits().getHits().length > 0) {
             response = client().prepareSearchScroll(response.getScrollId())
                     .setScroll(TimeValue.timeValueMinutes(1))
-                    .execute().actionGet();
+                    .get();
             assertSearchResponse(response);
             assertNull(response.getAggregations());
             total += response.getHits().getHits().length;

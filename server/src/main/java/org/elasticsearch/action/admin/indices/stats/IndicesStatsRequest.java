@@ -38,6 +38,15 @@ public class IndicesStatsRequest extends BroadcastRequest<IndicesStatsRequest> {
 
     private CommonStatsFlags flags = new CommonStatsFlags();
 
+    public IndicesStatsRequest() {
+        super((String[])null);
+    }
+
+    public IndicesStatsRequest(StreamInput in) throws IOException {
+        super(in);
+        flags = new CommonStatsFlags(in);
+    }
+
     /**
      * Sets all flags to return all stats.
      */
@@ -55,20 +64,18 @@ public class IndicesStatsRequest extends BroadcastRequest<IndicesStatsRequest> {
     }
 
     /**
-     * Document types to return stats for. Mainly affects {@link #indexing(boolean)} when
-     * enabled, returning specific indexing stats for those types.
+     * Returns the underlying stats flags.
      */
-    public IndicesStatsRequest types(String... types) {
-        flags.types(types);
-        return this;
+    public CommonStatsFlags flags() {
+        return flags;
     }
 
     /**
-     * Document types to return stats for. Mainly affects {@link #indexing(boolean)} when
-     * enabled, returning specific indexing stats for those types.
+     * Sets the underlying stats flags.
      */
-    public String[] types() {
-        return this.flags.types();
+    public IndicesStatsRequest flags(CommonStatsFlags flags) {
+        this.flags = flags;
+        return this;
     }
 
     /**
@@ -256,15 +263,14 @@ public class IndicesStatsRequest extends BroadcastRequest<IndicesStatsRequest> {
         return this;
     }
 
+    public IndicesStatsRequest includeUnloadedSegments(boolean includeUnloadedSegments) {
+        flags.includeUnloadedSegments(includeUnloadedSegments);
+        return this;
+    }
+
     @Override
     public void writeTo(StreamOutput out) throws IOException {
         super.writeTo(out);
         flags.writeTo(out);
-    }
-
-    @Override
-    public void readFrom(StreamInput in) throws IOException {
-        super.readFrom(in);
-        flags = new CommonStatsFlags(in);
     }
 }

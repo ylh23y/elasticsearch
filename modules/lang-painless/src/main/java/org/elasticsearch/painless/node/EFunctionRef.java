@@ -19,30 +19,26 @@
 
 package org.elasticsearch.painless.node;
 
-import org.elasticsearch.painless.AnalyzerCaster;
-import org.elasticsearch.painless.Definition;
-import org.elasticsearch.painless.Definition.Method;
-import org.elasticsearch.painless.Definition.MethodKey;
 import org.elasticsearch.painless.FunctionRef;
-import org.elasticsearch.painless.Globals;
-import org.elasticsearch.painless.Locals;
 import org.elasticsearch.painless.Location;
-import org.elasticsearch.painless.MethodWriter;
-import org.objectweb.asm.Type;
+import org.elasticsearch.painless.Scope;
+import org.elasticsearch.painless.ir.ClassNode;
+import org.elasticsearch.painless.ir.FuncRefNode;
+import org.elasticsearch.painless.symbol.ScriptRoot;
 
+import java.util.Collections;
+import java.util.List;
 import java.util.Objects;
-import java.util.Set;
-
-import static org.elasticsearch.painless.WriterConstants.LAMBDA_BOOTSTRAP_HANDLE;
 
 /**
  * Represents a function reference.
  */
-public final class EFunctionRef extends AExpression implements ILambda {
-    private final String type;
-    private final String call;
+public class EFunctionRef extends AExpression implements ILambda {
 
-    private FunctionRef ref;
+    protected final String type;
+    protected final String call;
+
+    // TODO: #54015
     private String defPointer;
 
     public EFunctionRef(Location location, String type, String call) {
@@ -53,71 +49,31 @@ public final class EFunctionRef extends AExpression implements ILambda {
     }
 
     @Override
-    void extractVariables(Set<String> variables) {}
+    Output analyze(ClassNode classNode, ScriptRoot scriptRoot, Scope scope, Input input) {
+        FunctionRef ref;
 
-    @Override
-    void analyze(Locals locals) {
-        if (expected == null) {
+        Output output = new Output();
+
+        if (input.expected == null) {
             ref = null;
-            actual = String.class;
+            output.actual = String.class;
             defPointer = "S" + type + "." + call + ",0";
         } else {
             defPointer = null;
-            try {
-                if ("this".equals(type)) {
-                    // user's own function
-                    Method interfaceMethod = locals.getDefinition().ClassToType(expected).struct.functionalMethod;
-                    if (interfaceMethod == null) {
-                        throw new IllegalArgumentException("Cannot convert function reference [" + type + "::" + call + "] " +
-                                                           "to [" + Definition.ClassToName(expected) + "], not a functional interface");
-                    }
-                    Method delegateMethod = locals.getMethod(new MethodKey(call, interfaceMethod.arguments.size()));
-                    if (delegateMethod == null) {
-                        throw new IllegalArgumentException("Cannot convert function reference [" + type + "::" + call + "] " +
-                                                           "to [" + Definition.ClassToName(expected) + "], function not found");
-                    }
-                    ref = new FunctionRef(expected, interfaceMethod, delegateMethod, 0);
-
-                    // check casts between the interface method and the delegate method are legal
-                    for (int i = 0; i < interfaceMethod.arguments.size(); ++i) {
-                        Class<?> from = interfaceMethod.arguments.get(i);
-                        Class<?> to = delegateMethod.arguments.get(i);
-                        AnalyzerCaster.getLegalCast(location, from, to, false, true);
-                    }
-
-                    if (interfaceMethod.rtn != void.class) {
-                        AnalyzerCaster.getLegalCast(location, delegateMethod.rtn, interfaceMethod.rtn, false, true);
-                    }
-                } else {
-                    // whitelist lookup
-                    ref = new FunctionRef(locals.getDefinition(), expected, type, call, 0);
-                }
-
-            } catch (IllegalArgumentException e) {
-                throw createError(e);
-            }
-            actual = expected;
+            ref = FunctionRef.create(
+                    scriptRoot.getPainlessLookup(), scriptRoot.getFunctionTable(), location, input.expected, type, call, 0);
+            output.actual = input.expected;
         }
-    }
 
-    @Override
-    void write(MethodWriter writer, Globals globals) {
-        if (ref != null) {
-            writer.writeDebugInfo(location);
-            writer.invokeDynamic(
-                ref.interfaceMethodName,
-                ref.factoryDescriptor,
-                LAMBDA_BOOTSTRAP_HANDLE,
-                ref.interfaceType,
-                ref.delegateClassName,
-                ref.delegateInvokeType,
-                ref.delegateMethodName,
-                ref.delegateType
-            );
-        } else {
-            // TODO: don't do this: its just to cutover :)
-            writer.push((String)null);
-        }
+        FuncRefNode funcRefNode = new FuncRefNode();
+
+        funcRefNode.setLocation(location);
+        funcRefNode.setExpressionType(output.actual);
+        funcRefNode.setFuncRef(ref);
+
+        output.expressionNode = funcRefNode;
+
+        return output;
     }
 
     @Override
@@ -126,12 +82,7 @@ public final class EFunctionRef extends AExpression implements ILambda {
     }
 
     @Override
-    public Type[] getCaptures() {
-        return new Type[0]; // no captures
-    }
-
-    @Override
-    public String toString() {
-        return singleLineToString(type, call);
+    public List<Class<?>> getCaptures() {
+        return Collections.emptyList();
     }
 }

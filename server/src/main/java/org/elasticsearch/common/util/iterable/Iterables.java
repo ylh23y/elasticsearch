@@ -21,7 +21,6 @@ package org.elasticsearch.common.util.iterable;
 
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.Collection;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Objects;
@@ -29,12 +28,10 @@ import java.util.stream.Stream;
 import java.util.stream.StreamSupport;
 
 public class Iterables {
-    public Iterables() {
-    }
 
     public static <T> Iterable<T> concat(Iterable<T>... inputs) {
         Objects.requireNonNull(inputs);
-        return new ConcatenatedIterable(inputs);
+        return new ConcatenatedIterable<>(inputs);
     }
 
     static class ConcatenatedIterable<T> implements Iterable<T> {
@@ -80,45 +77,6 @@ public class Iterables {
         }
     }
 
-    public static boolean allElementsAreEqual(Iterable<?> left, Iterable<?> right) {
-        Objects.requireNonNull(left);
-        Objects.requireNonNull(right);
-        if (left instanceof Collection && right instanceof Collection) {
-            Collection collection1 = (Collection) left;
-            Collection collection2 = (Collection) right;
-            if (collection1.size() != collection2.size()) {
-                return false;
-            }
-        }
-
-        Iterator<?> leftIt = left.iterator();
-        Iterator<?> rightIt = right.iterator();
-
-        while (true) {
-            if (leftIt.hasNext()) {
-                if (!rightIt.hasNext()) {
-                    return false;
-                }
-
-                Object o1 = leftIt.next();
-                Object o2 = rightIt.next();
-                if (Objects.equals(o1, o2)) {
-                    continue;
-                }
-
-                return false;
-            }
-
-            return !rightIt.hasNext();
-        }
-    }
-
-    public static <T> T getFirst(Iterable<T> collection, T defaultValue) {
-        Objects.requireNonNull(collection);
-        Iterator<T> iterator = collection.iterator();
-        return iterator.hasNext() ? iterator.next() : defaultValue;
-    }
-
     public static <T> T get(Iterable<T> iterable, int position) {
         Objects.requireNonNull(iterable);
         if (position < 0) {
@@ -143,5 +101,9 @@ public class Iterables {
             }
             return it.next();
         }
+    }
+
+    public static long size(Iterable<?> iterable) {
+        return StreamSupport.stream(iterable.spliterator(), true).count();
     }
 }

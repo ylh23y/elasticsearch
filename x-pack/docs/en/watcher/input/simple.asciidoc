@@ -1,5 +1,6 @@
+[role="xpack"]
 [[input-simple]]
-=== Simple Input
+=== Simple input
 
 Use the `simple` input to load static data into the execution
 context when the watch is triggered. This enables you to store the data 
@@ -20,6 +21,7 @@ an object (`obj`):
   }
 }
 --------------------------------------------------
+// NOTCONSOLE
 
 For example, the following watch uses the `simple` input to set the recipient
 name for a daily reminder email:
@@ -48,3 +50,4 @@ name for a daily reminder email:
   }
 }
 --------------------------------------------------
+// NOTCONSOLE

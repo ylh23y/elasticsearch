@@ -5,25 +5,14 @@
  */
 package org.elasticsearch.xpack.core.security.action.token;
 
-import org.elasticsearch.action.Action;
-import org.elasticsearch.client.ElasticsearchClient;
+import org.elasticsearch.action.ActionType;
 
-public final class RefreshTokenAction extends Action<CreateTokenRequest, CreateTokenResponse, CreateTokenRequestBuilder> {
+public final class RefreshTokenAction extends ActionType<CreateTokenResponse> {
 
     public static final String NAME = "cluster:admin/xpack/security/token/refresh";
     public static final RefreshTokenAction INSTANCE = new RefreshTokenAction();
 
     private RefreshTokenAction() {
-        super(NAME);
-    }
-
-    @Override
-    public CreateTokenRequestBuilder newRequestBuilder(ElasticsearchClient client) {
-        return new CreateTokenRequestBuilder(client, INSTANCE);
-    }
-
-    @Override
-    public CreateTokenResponse newResponse() {
-        return new CreateTokenResponse();
+        super(NAME, CreateTokenResponse::new);
     }
 }

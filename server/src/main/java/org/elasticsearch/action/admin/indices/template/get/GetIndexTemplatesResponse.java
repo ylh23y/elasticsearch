@@ -19,7 +19,7 @@
 package org.elasticsearch.action.admin.indices.template.get;
 
 import org.elasticsearch.action.ActionResponse;
-import org.elasticsearch.cluster.metadata.IndexTemplateMetaData;
+import org.elasticsearch.cluster.metadata.IndexTemplateMetadata;
 import org.elasticsearch.common.io.stream.StreamInput;
 import org.elasticsearch.common.io.stream.StreamOutput;
 import org.elasticsearch.common.xcontent.ToXContent;
@@ -29,51 +29,62 @@ import org.elasticsearch.common.xcontent.XContentBuilder;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Objects;
 
 import static java.util.Collections.singletonMap;
 
 public class GetIndexTemplatesResponse extends ActionResponse implements ToXContentObject {
 
-    private List<IndexTemplateMetaData> indexTemplates;
+    private final List<IndexTemplateMetadata> indexTemplates;
 
-    GetIndexTemplatesResponse() {
+    public GetIndexTemplatesResponse(StreamInput in) throws IOException {
+        super(in);
+        int size = in.readVInt();
+        indexTemplates = new ArrayList<>();
+        for (int i = 0 ; i < size ; i++) {
+            indexTemplates.add(IndexTemplateMetadata.readFrom(in));
+        }
     }
 
-    GetIndexTemplatesResponse(List<IndexTemplateMetaData> indexTemplates) {
+    public GetIndexTemplatesResponse(List<IndexTemplateMetadata> indexTemplates) {
         this.indexTemplates = indexTemplates;
     }
 
-    public List<IndexTemplateMetaData> getIndexTemplates() {
+    public List<IndexTemplateMetadata> getIndexTemplates() {
         return indexTemplates;
     }
 
     @Override
-    public void readFrom(StreamInput in) throws IOException {
-        super.readFrom(in);
-        int size = in.readVInt();
-        indexTemplates = new ArrayList<>(size);
-        for (int i = 0 ; i < size ; i++) {
-            indexTemplates.add(0, IndexTemplateMetaData.readFrom(in));
-        }
-    }
-
-    @Override
     public void writeTo(StreamOutput out) throws IOException {
-        super.writeTo(out);
         out.writeVInt(indexTemplates.size());
-        for (IndexTemplateMetaData indexTemplate : indexTemplates) {
+        for (IndexTemplateMetadata indexTemplate : indexTemplates) {
             indexTemplate.writeTo(out);
         }
     }
 
     @Override
+    public boolean equals(Object o) {
+        if (this == o) return true;
+        if (o == null || getClass() != o.getClass()) return false;
+        GetIndexTemplatesResponse that = (GetIndexTemplatesResponse) o;
+        return Objects.equals(indexTemplates, that.indexTemplates);
+    }
+
+    @Override
+    public int hashCode() {
+        return Objects.hash(indexTemplates);
+    }
+
+    @Override
     public XContentBuilder toXContent(XContentBuilder builder, Params params) throws IOException {
         params = new ToXContent.DelegatingMapParams(singletonMap("reduce_mappings", "true"), params);
+
         builder.startObject();
-        for (IndexTemplateMetaData indexTemplateMetaData : getIndexTemplates()) {
-            IndexTemplateMetaData.Builder.toXContent(indexTemplateMetaData, builder, params);
+        for (IndexTemplateMetadata indexTemplateMetadata : getIndexTemplates()) {
+            IndexTemplateMetadata.Builder.toXContent(indexTemplateMetadata, builder, params);
         }
         builder.endObject();
         return builder;
     }
+
 }

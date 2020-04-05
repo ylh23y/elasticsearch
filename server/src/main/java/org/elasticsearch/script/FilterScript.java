@@ -23,7 +23,6 @@ import java.util.Map;
 
 import org.apache.lucene.index.LeafReaderContext;
 import org.elasticsearch.index.fielddata.ScriptDocValues;
-import org.elasticsearch.search.lookup.LeafDocLookup;
 import org.elasticsearch.search.lookup.LeafSearchLookup;
 import org.elasticsearch.search.lookup.SearchLookup;
 
@@ -71,7 +70,7 @@ public abstract class FilterScript {
     }
 
     /** A factory to construct stateful {@link FilterScript} factories for a specific index. */
-    public interface Factory {
+    public interface Factory extends ScriptFactory {
         LeafFactory newFactory(Map<String, Object> params, SearchLookup lookup);
     }
 

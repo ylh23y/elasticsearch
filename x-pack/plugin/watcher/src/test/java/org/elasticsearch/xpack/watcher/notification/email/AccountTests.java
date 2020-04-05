@@ -5,7 +5,7 @@
  */
 package org.elasticsearch.xpack.watcher.notification.email;
 
-import org.elasticsearch.ElasticsearchException;
+import org.elasticsearch.common.settings.MockSecureSettings;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.common.unit.TimeValue;
 import org.elasticsearch.test.ESTestCase;
@@ -17,7 +17,6 @@ import org.junit.Before;
 import javax.mail.Address;
 import javax.mail.Message;
 import javax.mail.internet.InternetAddress;
-
 import java.util.Properties;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
@@ -117,8 +116,9 @@ public class AccountTests extends ESTestCase {
         String password = null;
         if (randomBoolean()) {
             password = randomAlphaOfLength(8);
-            smtpBuilder.put("password", password);
-            smtpProps.put("mail.smtp.password", password);
+            final MockSecureSettings secureSettings = new MockSecureSettings();
+            secureSettings.setString("smtp." + Account.SECURE_PASSWORD_SETTING.getKey(), password);
+            builder.setSecureSettings(secureSettings);
         }
         for (int i = 0; i < 5; i++) {
             String name = randomAlphaOfLength(5);
@@ -141,7 +141,7 @@ public class AccountTests extends ESTestCase {
 
         Settings settings = builder.build();
 
-        Account.Config config = new Account.Config(accountName, settings);
+        Account.Config config = new Account.Config(accountName, settings, null);
 
         assertThat(config.profile, is(profile));
         assertThat(config.defaults, equalTo(emailDefaults));
@@ -150,7 +150,7 @@ public class AccountTests extends ESTestCase {
         assertThat(config.smtp.host, is(host));
         assertThat(config.smtp.user, is(user));
         if (password != null) {
-            assertThat(config.smtp.password, is(password.toCharArray()));
+            assertThat(config.smtp.password.getChars(), is(password.toCharArray()));
         } else {
             assertThat(config.smtp.password, nullValue());
         }
@@ -158,12 +158,14 @@ public class AccountTests extends ESTestCase {
     }
 
     public void testSend() throws Exception {
+        final MockSecureSettings secureSettings = new MockSecureSettings();
+        secureSettings.setString("smtp." + Account.SECURE_PASSWORD_SETTING.getKey(), EmailServer.PASSWORD);
         Account account = new Account(new Account.Config("default", Settings.builder()
                 .put("smtp.host", "localhost")
                 .put("smtp.port", server.port())
                 .put("smtp.user", EmailServer.USERNAME)
-                .put("smtp.password", EmailServer.PASSWORD)
-                .build()), null, logger);
+                .setSecureSettings(secureSettings)
+                .build(), null), null, logger);
 
         Email email = Email.builder()
                 .id("_id")
@@ -193,12 +195,14 @@ public class AccountTests extends ESTestCase {
     }
 
     public void testSendCCAndBCC() throws Exception {
+        final MockSecureSettings secureSettings = new MockSecureSettings();
+        secureSettings.setString("smtp." + Account.SECURE_PASSWORD_SETTING.getKey(), EmailServer.PASSWORD);
         Account account = new Account(new Account.Config("default", Settings.builder()
                 .put("smtp.host", "localhost")
                 .put("smtp.port", server.port())
                 .put("smtp.user", EmailServer.USERNAME)
-                .put("smtp.password", EmailServer.PASSWORD)
-                .build()), null, logger);
+                .setSecureSettings(secureSettings)
+                .build(), null), null, logger);
 
         Email email = Email.builder()
                 .id("_id")
@@ -236,7 +240,7 @@ public class AccountTests extends ESTestCase {
         Account account = new Account(new Account.Config("default", Settings.builder()
                 .put("smtp.host", "localhost")
                 .put("smtp.port", server.port())
-                .build()), null, logger);
+                .build(), null), null, logger);
 
         Email email = Email.builder()
                 .id("_id")
@@ -260,7 +264,7 @@ public class AccountTests extends ESTestCase {
         Account account = new Account(new Account.Config("default", Settings.builder()
                 .put("smtp.host", "localhost")
                 .put("smtp.port", server.port())
-                .build()), null, logger);
+                .build(), null), null, logger);
 
         Properties mailProperties = account.getConfig().smtp.properties;
         assertThat(mailProperties.get("mail.smtp.connectiontimeout"), is(String.valueOf(TimeValue.timeValueMinutes(2).millis())));
@@ -275,7 +279,7 @@ public class AccountTests extends ESTestCase {
                 .put("smtp.connection_timeout", TimeValue.timeValueMinutes(4))
                 .put("smtp.write_timeout", TimeValue.timeValueMinutes(6))
                 .put("smtp.timeout", TimeValue.timeValueMinutes(8))
-                .build()), null, logger);
+                .build(), null), null, logger);
 
         Properties mailProperties = account.getConfig().smtp.properties;
 
@@ -290,7 +294,8 @@ public class AccountTests extends ESTestCase {
                     .put("smtp.host", "localhost")
                     .put("smtp.port", server.port())
                     .put("smtp.connection_timeout", 4000)
-                    .build()), null, logger);
+                    .build(), null), null, logger);
         });
     }
+
 }

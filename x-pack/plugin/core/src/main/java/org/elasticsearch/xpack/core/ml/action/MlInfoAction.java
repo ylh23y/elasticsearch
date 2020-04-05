@@ -5,11 +5,11 @@
  */
 package org.elasticsearch.xpack.core.ml.action;
 
-import org.elasticsearch.action.Action;
 import org.elasticsearch.action.ActionRequest;
 import org.elasticsearch.action.ActionRequestBuilder;
 import org.elasticsearch.action.ActionRequestValidationException;
 import org.elasticsearch.action.ActionResponse;
+import org.elasticsearch.action.ActionType;
 import org.elasticsearch.client.ElasticsearchClient;
 import org.elasticsearch.common.io.stream.StreamInput;
 import org.elasticsearch.common.io.stream.StreamOutput;
@@ -21,23 +21,13 @@ import java.util.Collections;
 import java.util.Map;
 import java.util.Objects;
 
-public class MlInfoAction extends Action<MlInfoAction.Request, MlInfoAction.Response, MlInfoAction.RequestBuilder> {
+public class MlInfoAction extends ActionType<MlInfoAction.Response> {
 
     public static final MlInfoAction INSTANCE = new MlInfoAction();
     public static final String NAME = "cluster:monitor/xpack/ml/info/get";
 
     private MlInfoAction() {
-        super(NAME);
-    }
-
-    @Override
-    public RequestBuilder newRequestBuilder(ElasticsearchClient client) {
-        return new RequestBuilder(client, this);
-    }
-
-    @Override
-    public Response newResponse() {
-        return new Response();
+        super(NAME, Response::new);
     }
 
     public static class Request extends ActionRequest {
@@ -56,7 +46,7 @@ public class MlInfoAction extends Action<MlInfoAction.Request, MlInfoAction.Resp
         }
     }
 
-    public static class RequestBuilder extends ActionRequestBuilder<Request, Response, RequestBuilder> {
+    public static class RequestBuilder extends ActionRequestBuilder<Request, Response> {
 
         public RequestBuilder(ElasticsearchClient client, MlInfoAction action) {
             super(client, action, new Request());
@@ -75,15 +65,17 @@ public class MlInfoAction extends Action<MlInfoAction.Request, MlInfoAction.Resp
             this.info = Collections.emptyMap();
         }
 
-        @Override
-        public void readFrom(StreamInput in) throws IOException {
-            super.readFrom(in);
+        public Response(StreamInput in) throws IOException {
+            super(in);
             info = in.readMap();
+        }
+
+        public Map<String, Object> getInfo() {
+            return info;
         }
 
         @Override
         public void writeTo(StreamOutput out) throws IOException {
-            super.writeTo(out);
             out.writeMap(info);
         }
 

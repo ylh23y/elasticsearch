@@ -18,24 +18,38 @@
  */
 package org.elasticsearch.bootstrap;
 
-import org.elasticsearch.cluster.metadata.MetaData;
+import org.elasticsearch.cluster.metadata.Metadata;
 import org.elasticsearch.common.settings.Settings;
+import org.elasticsearch.env.Environment;
 
 /**
  * Context that is passed to every bootstrap check to make decisions on.
  */
 public class BootstrapContext {
     /**
-     * The nodes settings
+     * The node's environment
      */
-    public final Settings settings;
-    /**
-     * The nodes local state metadata loaded on startup
-     */
-    public final MetaData metaData;
+    private final Environment environment;
 
-    public BootstrapContext(Settings settings, MetaData metaData) {
-        this.settings = settings;
-        this.metaData = metaData;
+    /**
+     * The node's local state metadata loaded on startup
+     */
+    private final Metadata metadata;
+
+    public BootstrapContext(Environment environment, Metadata metadata) {
+        this.environment = environment;
+        this.metadata = metadata;
+    }
+
+    public Environment environment() {
+        return environment;
+    }
+
+    public Settings settings() {
+        return environment.settings();
+    }
+
+    public Metadata metadata() {
+        return metadata;
     }
 }

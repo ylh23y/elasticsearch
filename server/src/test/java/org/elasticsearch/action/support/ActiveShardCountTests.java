@@ -23,8 +23,8 @@ import com.carrotsearch.hppc.cursors.ObjectCursor;
 import org.elasticsearch.Version;
 import org.elasticsearch.cluster.ClusterName;
 import org.elasticsearch.cluster.ClusterState;
-import org.elasticsearch.cluster.metadata.IndexMetaData;
-import org.elasticsearch.cluster.metadata.MetaData;
+import org.elasticsearch.cluster.metadata.IndexMetadata;
+import org.elasticsearch.cluster.metadata.Metadata;
 import org.elasticsearch.cluster.routing.IndexRoutingTable;
 import org.elasticsearch.cluster.routing.IndexShardRoutingTable;
 import org.elasticsearch.cluster.routing.RoutingTable;
@@ -36,6 +36,7 @@ import org.elasticsearch.test.ESTestCase;
 
 import java.io.IOException;
 import java.nio.ByteBuffer;
+import java.util.Arrays;
 
 /**
  * Tests for the {@link ActiveShardCount} class
@@ -165,6 +166,17 @@ public class ActiveShardCountTests extends ESTestCase {
         assertEquals("activeShardCount cannot be negative", e.getMessage());
     }
 
+    public void testEnoughShardsActiveWithClosedIndex() {
+        final String indexName = "test-idx";
+        final int numberOfShards = randomIntBetween(1, 5);
+        final int numberOfReplicas = randomIntBetween(4, 7);
+
+        final ClusterState clusterState = initializeWithClosedIndex(indexName, numberOfShards, numberOfReplicas);
+        for (ActiveShardCount waitForActiveShards : Arrays.asList(ActiveShardCount.DEFAULT, ActiveShardCount.ALL, ActiveShardCount.ONE)) {
+            assertTrue(waitForActiveShards.enoughShardsActive(clusterState, indexName));
+        }
+    }
+
     private void runTestForOneActiveShard(final ActiveShardCount activeShardCount) {
         final String indexName = "test-idx";
         final int numberOfShards = randomIntBetween(1, 5);
@@ -181,15 +193,27 @@ public class ActiveShardCountTests extends ESTestCase {
 
     private ClusterState initializeWithNewIndex(final String indexName, final int numShards, final int numReplicas) {
         // initial index creation and new routing table info
-        final IndexMetaData indexMetaData = IndexMetaData.builder(indexName)
+        final IndexMetadata indexMetadata = IndexMetadata.builder(indexName)
                                                 .settings(settings(Version.CURRENT)
-                                                              .put(IndexMetaData.SETTING_INDEX_UUID, UUIDs.randomBase64UUID()))
+                                                              .put(IndexMetadata.SETTING_INDEX_UUID, UUIDs.randomBase64UUID()))
                                                 .numberOfShards(numShards)
                                                 .numberOfReplicas(numReplicas)
                                                 .build();
-        final MetaData metaData = MetaData.builder().put(indexMetaData, true).build();
-        final RoutingTable routingTable = RoutingTable.builder().addAsNew(indexMetaData).build();
-        return ClusterState.builder(new ClusterName("test_cluster")).metaData(metaData).routingTable(routingTable).build();
+        final Metadata metadata = Metadata.builder().put(indexMetadata, true).build();
+        final RoutingTable routingTable = RoutingTable.builder().addAsNew(indexMetadata).build();
+        return ClusterState.builder(new ClusterName("test_cluster")).metadata(metadata).routingTable(routingTable).build();
+    }
+
+    private ClusterState initializeWithClosedIndex(final String indexName, final int numShards, final int numReplicas) {
+        final IndexMetadata indexMetadata = IndexMetadata.builder(indexName)
+            .settings(settings(Version.CURRENT)
+                .put(IndexMetadata.SETTING_INDEX_UUID, UUIDs.randomBase64UUID()))
+            .numberOfShards(numShards)
+            .numberOfReplicas(numReplicas)
+            .state(IndexMetadata.State.CLOSE)
+            .build();
+        final Metadata metadata = Metadata.builder().put(indexMetadata, true).build();
+        return ClusterState.builder(new ClusterName("test_cluster")).metadata(metadata).build();
     }
 
     private ClusterState startPrimaries(final ClusterState clusterState, final String indexName) {

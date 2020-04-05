@@ -32,9 +32,7 @@ import org.elasticsearch.common.CheckedConsumer;
 import org.elasticsearch.index.mapper.MappedFieldType;
 import org.elasticsearch.index.mapper.NumberFieldMapper;
 import org.elasticsearch.search.aggregations.AggregatorTestCase;
-import org.elasticsearch.search.aggregations.metrics.stats.extended.ExtendedStats;
-import org.elasticsearch.search.aggregations.metrics.stats.extended.ExtendedStatsAggregationBuilder;
-import org.elasticsearch.search.aggregations.metrics.stats.extended.InternalExtendedStats;
+import org.elasticsearch.search.aggregations.support.AggregationInspectionHelper;
 
 import java.io.IOException;
 import java.util.function.Consumer;
@@ -43,6 +41,8 @@ import static java.util.Collections.singleton;
 
 public class ExtendedStatsAggregatorTests extends AggregatorTestCase {
     private static final double TOLERANCE = 1e-5;
+
+    // TODO: Add script test cases.  Should fail with defaultValuesSourceType() commented out.
 
     public void testEmpty() throws IOException {
         MappedFieldType ft =
@@ -58,6 +58,7 @@ public class ExtendedStatsAggregatorTests extends AggregatorTestCase {
                 assertEquals(Double.NaN, stats.getVariance(), 0);
                 assertEquals(Double.NaN, stats.getStdDeviation(), 0);
                 assertEquals(0d, stats.getSumOfSquares(), 0);
+                assertFalse(AggregationInspectionHelper.hasValue(stats));
             }
         );
     }
@@ -95,6 +96,35 @@ public class ExtendedStatsAggregatorTests extends AggregatorTestCase {
                     stats.getStdDeviationBound(ExtendedStats.Bounds.LOWER), TOLERANCE);
                 assertEquals(expected.stdDevBound(ExtendedStats.Bounds.UPPER, stats.getSigma()),
                     stats.getStdDeviationBound(ExtendedStats.Bounds.UPPER), TOLERANCE);
+                assertTrue(AggregationInspectionHelper.hasValue(stats));
+            }
+        );
+    }
+
+    /**
+     * Testcase for https://github.com/elastic/elasticsearch/issues/37303
+     */
+    public void testVarianceNonNegative() throws IOException {
+        MappedFieldType ft =
+            new NumberFieldMapper.NumberFieldType(NumberFieldMapper.NumberType.DOUBLE);
+        ft.setName("field");
+        final ExtendedSimpleStatsAggregator expected = new ExtendedSimpleStatsAggregator();
+        testCase(ft,
+            iw -> {
+                int numDocs = 3;
+                for (int i = 0; i < numDocs; i++) {
+                    Document doc = new Document();
+                    double value = 49.95d;
+                    long valueAsLong = NumericUtils.doubleToSortableLong(value);
+                    doc.add(new SortedNumericDocValuesField("field", valueAsLong));
+                    expected.add(value);
+                    iw.addDocument(doc);
+                }
+            },
+            stats -> {
+                //since the value(49.95) is a constant, variance should be 0
+                assertEquals(0.0d, stats.getVariance(), TOLERANCE);
+                assertEquals(0.0d, stats.getStdDeviation(), TOLERANCE);
             }
         );
     }
@@ -131,6 +161,7 @@ public class ExtendedStatsAggregatorTests extends AggregatorTestCase {
                     stats.getStdDeviationBound(ExtendedStats.Bounds.LOWER), TOLERANCE);
                 assertEquals(expected.stdDevBound(ExtendedStats.Bounds.UPPER, stats.getSigma()),
                     stats.getStdDeviationBound(ExtendedStats.Bounds.UPPER), TOLERANCE);
+                assertTrue(AggregationInspectionHelper.hasValue(stats));
             }
         );
     }
@@ -235,7 +266,8 @@ public class ExtendedStatsAggregatorTests extends AggregatorTestCase {
         }
 
         double variance() {
-            return (sumOfSqrs - ((sum * sum) / count)) / count;
+            double variance = (sumOfSqrs - ((sum * sum) / count)) / count;
+            return variance < 0  ? 0 : variance;
         }
     }
 }

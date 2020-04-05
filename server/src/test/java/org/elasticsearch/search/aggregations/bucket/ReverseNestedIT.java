@@ -28,7 +28,7 @@ import org.elasticsearch.search.aggregations.bucket.filter.Filter;
 import org.elasticsearch.search.aggregations.bucket.nested.Nested;
 import org.elasticsearch.search.aggregations.bucket.nested.ReverseNested;
 import org.elasticsearch.search.aggregations.bucket.terms.Terms;
-import org.elasticsearch.search.aggregations.metrics.valuecount.ValueCount;
+import org.elasticsearch.search.aggregations.metrics.ValueCount;
 import org.elasticsearch.search.aggregations.BucketOrder;
 import org.elasticsearch.test.ESIntegTestCase;
 
@@ -37,8 +37,8 @@ import java.util.Arrays;
 import java.util.List;
 
 import static org.elasticsearch.action.support.WriteRequest.RefreshPolicy.IMMEDIATE;
-import static org.elasticsearch.cluster.metadata.IndexMetaData.SETTING_NUMBER_OF_REPLICAS;
-import static org.elasticsearch.cluster.metadata.IndexMetaData.SETTING_NUMBER_OF_SHARDS;
+import static org.elasticsearch.cluster.metadata.IndexMetadata.SETTING_NUMBER_OF_REPLICAS;
+import static org.elasticsearch.cluster.metadata.IndexMetadata.SETTING_NUMBER_OF_SHARDS;
 import static org.elasticsearch.common.xcontent.XContentFactory.jsonBuilder;
 import static org.elasticsearch.index.query.QueryBuilders.matchAllQuery;
 import static org.elasticsearch.index.query.QueryBuilders.termQuery;
@@ -62,18 +62,20 @@ public class ReverseNestedIT extends ESIntegTestCase {
     @Override
     public void setupSuiteScopeCluster() throws Exception {
         assertAcked(prepareCreate("idx1")
-                .addMapping(
-                        "type",
+                .setMapping(
                         jsonBuilder().startObject().startObject("properties")
                                 .startObject("field1").field("type", "keyword").endObject()
+                                .startObject("alias")
+                                    .field("type", "alias")
+                                    .field("path", "field1")
+                                .endObject()
                                 .startObject("nested1").field("type", "nested").startObject("properties")
                                     .startObject("field2").field("type", "keyword").endObject()
                                 .endObject().endObject()
                                 .endObject().endObject()
                 ));
         assertAcked(prepareCreate("idx2")
-                .addMapping(
-                        "type",
+                .setMapping(
                         jsonBuilder().startObject().startObject("properties")
                                 .startObject("nested1").field("type", "nested").startObject("properties")
                                     .startObject("field1").field("type", "keyword").endObject()
@@ -118,7 +120,7 @@ public class ReverseNestedIT extends ESIntegTestCase {
             source.startObject().field("field2", value1).endObject();
         }
         source.endArray().endObject();
-        indexRandom(false, client().prepareIndex("idx1", "type").setRouting("1").setSource(source));
+        indexRandom(false, client().prepareIndex("idx1").setRouting("1").setSource(source));
     }
 
     private void insertIdx2(String[][] values) throws Exception {
@@ -133,7 +135,7 @@ public class ReverseNestedIT extends ESIntegTestCase {
             source.endArray().endObject();
         }
         source.endArray().endObject();
-        indexRandom(false, client().prepareIndex("idx2", "type").setRouting("1").setSource(source));
+        indexRandom(false, client().prepareIndex("idx2").setRouting("1").setSource(source));
     }
 
     public void testSimpleReverseNestedToRoot() throws Exception {
@@ -493,7 +495,7 @@ public class ReverseNestedIT extends ESIntegTestCase {
     }
 
     public void testSameParentDocHavingMultipleBuckets() throws Exception {
-        XContentBuilder mapping = jsonBuilder().startObject().startObject("product").field("dynamic", "strict").startObject("properties")
+        XContentBuilder mapping = jsonBuilder().startObject().startObject("_doc").field("dynamic", "strict").startObject("properties")
                 .startObject("id").field("type", "long").endObject()
                 .startObject("category")
                     .field("type", "nested")
@@ -517,10 +519,10 @@ public class ReverseNestedIT extends ESIntegTestCase {
         assertAcked(
                 prepareCreate("idx3")
                         .setSettings(Settings.builder().put(SETTING_NUMBER_OF_SHARDS, 1).put(SETTING_NUMBER_OF_REPLICAS, 0))
-                        .addMapping("product", mapping)
+                        .setMapping(mapping)
         );
 
-        client().prepareIndex("idx3", "product", "1").setRefreshPolicy(IMMEDIATE).setSource(
+        client().prepareIndex("idx3").setId("1").setRefreshPolicy(IMMEDIATE).setSource(
                 jsonBuilder().startObject()
                         .startArray("sku")
                             .startObject()
@@ -610,7 +612,8 @@ public class ReverseNestedIT extends ESIntegTestCase {
                                                 nested("nested_1", "sku").subAggregation(
                                                         filter("filter_by_sku", termQuery("sku.sku_type", "bar1")).subAggregation(
                                                                 nested("nested_2", "sku.colors").subAggregation(
-                                                                        filter("filter_sku_color", termQuery("sku.colors.name", "red")).subAggregation(
+                                                                        filter("filter_sku_color", termQuery("sku.colors.name", "red"))
+                                                                        .subAggregation(
                                                                                 reverseNested("reverse_to_sku").path("sku").subAggregation(
                                                                                         count("sku_count").field("sku.sku_type")
                                                                                 )
@@ -648,5 +651,29 @@ public class ReverseNestedIT extends ESIntegTestCase {
             ValueCount barCount = reverseToBar.getAggregations().get("sku_count");
             assertThat(barCount.getValue(), equalTo(2L));
         }
+    }
+
+    public void testFieldAlias() {
+        SearchResponse response = client().prepareSearch("idx1")
+            .addAggregation(nested("nested1", "nested1")
+                .subAggregation(
+                    terms("field2").field("nested1.field2")
+                        .subAggregation(
+                            reverseNested("nested1_to_field1")
+                                .subAggregation(
+                                    terms("field1").field("alias")
+                                        .collectMode(randomFrom(SubAggCollectionMode.values())))))).get();
+
+        assertSearchResponse(response);
+
+        Nested nested = response.getAggregations().get("nested1");
+        Terms nestedTerms = nested.getAggregations().get("field2");
+        Terms.Bucket bucket = nestedTerms.getBuckets().iterator().next();
+
+        ReverseNested reverseNested = bucket.getAggregations().get("nested1_to_field1");
+        Terms reverseNestedTerms = reverseNested.getAggregations().get("field1");
+
+        assertThat(((InternalAggregation)reverseNested).getProperty("field1"), sameInstance(reverseNestedTerms));
+        assertThat(reverseNestedTerms.getBuckets().size(), equalTo(6));
     }
 }

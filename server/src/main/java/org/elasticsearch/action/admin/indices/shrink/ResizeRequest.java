@@ -26,7 +26,7 @@ import org.elasticsearch.action.admin.indices.create.CreateIndexRequest;
 import org.elasticsearch.action.support.ActiveShardCount;
 import org.elasticsearch.action.support.IndicesOptions;
 import org.elasticsearch.action.support.master.AcknowledgedRequest;
-import org.elasticsearch.cluster.metadata.IndexMetaData;
+import org.elasticsearch.cluster.metadata.IndexMetadata;
 import org.elasticsearch.common.ParseField;
 import org.elasticsearch.common.io.stream.StreamInput;
 import org.elasticsearch.common.io.stream.StreamOutput;
@@ -45,7 +45,7 @@ import static org.elasticsearch.action.ValidateActions.addValidationError;
  */
 public class ResizeRequest extends AcknowledgedRequest<ResizeRequest> implements IndicesRequest, ToXContentObject {
 
-    public static final ObjectParser<ResizeRequest, Void> PARSER = new ObjectParser<>("resize_request", null);
+    public static final ObjectParser<ResizeRequest, Void> PARSER = new ObjectParser<>("resize_request");
     static {
         PARSER.declareField((parser, request, context) -> request.getTargetIndexRequest().settings(parser.map()),
             new ParseField("settings"), ObjectParser.ValueType.OBJECT);
@@ -56,7 +56,15 @@ public class ResizeRequest extends AcknowledgedRequest<ResizeRequest> implements
     private CreateIndexRequest targetIndexRequest;
     private String sourceIndex;
     private ResizeType type = ResizeType.SHRINK;
-    private boolean copySettings = false;
+    private Boolean copySettings = true;
+
+    public ResizeRequest(StreamInput in) throws IOException {
+        super(in);
+        targetIndexRequest = new CreateIndexRequest(in);
+        sourceIndex = in.readString();
+        type = in.readEnum(ResizeType.class);
+        copySettings = in.readOptionalBoolean();
+    }
 
     ResizeRequest() {}
 
@@ -77,9 +85,10 @@ public class ResizeRequest extends AcknowledgedRequest<ResizeRequest> implements
         if (targetIndexRequest.settings().getByPrefix("index.sort.").isEmpty() == false) {
             validationException = addValidationError("can't override index sort when resizing an index", validationException);
         }
-        if (type == ResizeType.SPLIT && IndexMetaData.INDEX_NUMBER_OF_SHARDS_SETTING.exists(targetIndexRequest.settings()) == false) {
+        if (type == ResizeType.SPLIT && IndexMetadata.INDEX_NUMBER_OF_SHARDS_SETTING.exists(targetIndexRequest.settings()) == false) {
             validationException = addValidationError("index.number_of_shards is required for split operations", validationException);
         }
+        assert copySettings == null || copySettings;
         return validationException;
     }
 
@@ -88,34 +97,15 @@ public class ResizeRequest extends AcknowledgedRequest<ResizeRequest> implements
     }
 
     @Override
-    public void readFrom(StreamInput in) throws IOException {
-        super.readFrom(in);
-        targetIndexRequest = new CreateIndexRequest();
-        targetIndexRequest.readFrom(in);
-        sourceIndex = in.readString();
-        if (in.getVersion().onOrAfter(ResizeAction.COMPATIBILITY_VERSION)) {
-            type = in.readEnum(ResizeType.class);
-        } else {
-            type = ResizeType.SHRINK; // BWC this used to be shrink only
-        }
-        if (in.getVersion().onOrAfter(Version.V_6_4_0)) {
-            copySettings = in.readBoolean();
-        } else {
-            copySettings = false;
-        }
-    }
-
-    @Override
     public void writeTo(StreamOutput out) throws IOException {
         super.writeTo(out);
         targetIndexRequest.writeTo(out);
         out.writeString(sourceIndex);
-        if (out.getVersion().onOrAfter(ResizeAction.COMPATIBILITY_VERSION)) {
-            out.writeEnum(type);
+        if (type == ResizeType.CLONE && out.getVersion().before(Version.V_7_4_0)) {
+            throw new IllegalArgumentException("can't send clone request to a node that's older than " + Version.V_7_4_0);
         }
-        if (out.getVersion().onOrAfter(Version.V_6_4_0)) {
-            out.writeBoolean(copySettings);
-        }
+        out.writeEnum(type);
+        out.writeOptionalBoolean(copySettings);
     }
 
     @Override
@@ -187,11 +177,14 @@ public class ResizeRequest extends AcknowledgedRequest<ResizeRequest> implements
         return type;
     }
 
-    public void setCopySettings(final boolean copySettings) {
+    public void setCopySettings(final Boolean copySettings) {
+        if (copySettings != null && copySettings == false) {
+            throw new IllegalArgumentException("[copySettings] can not be explicitly set to [false]");
+        }
         this.copySettings = copySettings;
     }
 
-    public boolean getCopySettings() {
+    public Boolean getCopySettings() {
         return copySettings;
     }
 

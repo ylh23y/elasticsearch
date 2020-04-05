@@ -29,10 +29,16 @@ import org.apache.lucene.index.DirectoryReader;
 import org.apache.lucene.index.DocValues;
 import org.apache.lucene.index.IndexOptions;
 import org.apache.lucene.index.IndexReader;
+import org.apache.lucene.index.IndexWriterConfig;
 import org.apache.lucene.index.LeafReaderContext;
 import org.apache.lucene.index.RandomIndexWriter;
+import org.apache.lucene.search.CollectionTerminatedException;
 import org.apache.lucene.search.DocIdSet;
 import org.apache.lucene.search.MatchAllDocsQuery;
+import org.apache.lucene.search.Sort;
+import org.apache.lucene.search.SortField;
+import org.apache.lucene.search.SortedNumericSortField;
+import org.apache.lucene.search.SortedSetSortField;
 import org.apache.lucene.store.Directory;
 import org.apache.lucene.util.Bits;
 import org.apache.lucene.util.BytesRef;
@@ -56,6 +62,7 @@ import java.util.Set;
 import static org.elasticsearch.index.mapper.NumberFieldMapper.NumberType.DOUBLE;
 import static org.elasticsearch.index.mapper.NumberFieldMapper.NumberType.LONG;
 import static org.hamcrest.Matchers.equalTo;
+import static org.hamcrest.Matchers.greaterThan;
 
 public class CompositeValuesCollectorQueueTests extends AggregatorTestCase {
     static class ClassAndName {
@@ -129,72 +136,99 @@ public class CompositeValuesCollectorQueueTests extends AggregatorTestCase {
                     assert(false);
             }
         }
-        testRandomCase(true, types);
+        testRandomCase(types);
     }
 
     private void testRandomCase(ClassAndName... types) throws IOException {
-        testRandomCase(true, types);
-        testRandomCase(false, types);
+        for (int i = 0; i < types.length; i++) {
+            testRandomCase(true, true, i, types);
+            testRandomCase(true, false, i, types);
+            testRandomCase(false, true, i, types);
+            testRandomCase(false, false, i, types);
+        }
     }
 
-    private void testRandomCase(boolean forceMerge, ClassAndName... types) throws IOException {
+    private void testRandomCase(boolean forceMerge,
+                                boolean missingBucket,
+                                int indexSortSourcePrefix,
+                                ClassAndName... types) throws IOException {
         final BigArrays bigArrays = BigArrays.NON_RECYCLING_INSTANCE;
         int numDocs = randomIntBetween(50, 100);
         List<Comparable<?>[]> possibleValues = new ArrayList<>();
-        for (ClassAndName type : types) {
-            int numValues = randomIntBetween(1, numDocs*2);
-            Comparable<?>[] values = new Comparable[numValues];
+        SortField[] indexSortFields = indexSortSourcePrefix == 0 ? null : new SortField[indexSortSourcePrefix];
+        for (int i = 0; i < types.length; i++) {
+            ClassAndName type = types[i];
+            final Comparable<?>[] values;
+            int numValues = randomIntBetween(1, numDocs * 2);
+            values = new Comparable[numValues];
             if (type.clazz == Long.class) {
-                for (int i = 0; i < numValues; i++) {
-                    values[i] = randomLong();
+                if (i < indexSortSourcePrefix) {
+                    indexSortFields[i] = new SortedNumericSortField(type.fieldType.name(), SortField.Type.LONG);
+                }
+                for (int j = 0; j < numValues; j++) {
+                    values[j] = randomLong();
                 }
             } else if (type.clazz == Double.class) {
-                for (int i = 0; i < numValues; i++) {
-                    values[i] = randomDouble();
+                if (i < indexSortSourcePrefix) {
+                    indexSortFields[i] = new SortedNumericSortField(type.fieldType.name(), SortField.Type.DOUBLE);
+                }
+                for (int j = 0; j < numValues; j++) {
+                    values[j] = randomDouble();
                 }
             } else if (type.clazz == BytesRef.class) {
-                for (int i = 0; i < numValues; i++) {
-                    values[i] = new BytesRef(randomAlphaOfLengthBetween(5, 50));
+                if (i < indexSortSourcePrefix) {
+                    indexSortFields[i] = new SortedSetSortField(type.fieldType.name(), false);
+                }
+                for (int j = 0; j < numValues; j++) {
+                    values[j] = new BytesRef(randomAlphaOfLengthBetween(5, 50));
                 }
             } else {
-                assert(false);
+                assert (false);
             }
             possibleValues.add(values);
         }
 
         Set<CompositeKey> keys = new HashSet<>();
         try (Directory directory = newDirectory()) {
+            final IndexWriterConfig writerConfig = newIndexWriterConfig();
+            if (indexSortFields != null) {
+                writerConfig.setIndexSort(new Sort(indexSortFields));
+            }
             try (RandomIndexWriter indexWriter = new RandomIndexWriter(random(), directory, new KeywordAnalyzer())) {
                 for (int i = 0; i < numDocs; i++) {
                     Document document = new Document();
                     List<List<Comparable<?>>> docValues = new ArrayList<>();
                     boolean hasAllField = true;
                     for (int j = 0; j < types.length; j++) {
-                        int numValues = randomIntBetween(0, 5);
+                        int numValues = indexSortSourcePrefix-1 >= j ? 1 : randomIntBetween(0, 5);
+                        List<Comparable<?>> values = new ArrayList<>();
                         if (numValues == 0) {
                             hasAllField = false;
-                        }
-                        List<Comparable<?>> values = new ArrayList<>();
-                        for (int k = 0; k < numValues; k++) {
-                            values.add(possibleValues.get(j)[randomIntBetween(0, possibleValues.get(j).length-1)]);
-                            if (types[j].clazz == Long.class) {
-                                long value = (Long) values.get(k);
-                                document.add(new SortedNumericDocValuesField(types[j].fieldType.name(), value));
-                                document.add(new LongPoint(types[j].fieldType.name(), value));
-                            } else if (types[j].clazz == Double.class) {
-                                document.add(new SortedNumericDocValuesField(types[j].fieldType.name(),
-                                    NumericUtils.doubleToSortableLong((Double) values.get(k))));
-                            } else if (types[j].clazz == BytesRef.class) {
-                                BytesRef value = (BytesRef) values.get(k);
-                                document.add(new SortedSetDocValuesField(types[j].fieldType.name(), (BytesRef) values.get(k)));
-                                document.add(new TextField(types[j].fieldType.name(), value.utf8ToString(), Field.Store.NO));
-                            } else {
-                                assert(false);
+                            if (missingBucket) {
+                                values.add(null);
+                            }
+                        } else {
+                            for (int k = 0; k < numValues; k++) {
+                                values.add(possibleValues.get(j)[randomIntBetween(0, possibleValues.get(j).length - 1)]);
+                                if (types[j].clazz == Long.class) {
+                                    long value = (Long) values.get(k);
+                                    document.add(new SortedNumericDocValuesField(types[j].fieldType.name(), value));
+                                    document.add(new LongPoint(types[j].fieldType.name(), value));
+                                } else if (types[j].clazz == Double.class) {
+                                    document.add(new SortedNumericDocValuesField(types[j].fieldType.name(),
+                                        NumericUtils.doubleToSortableLong((Double) values.get(k))));
+                                } else if (types[j].clazz == BytesRef.class) {
+                                    BytesRef value = (BytesRef) values.get(k);
+                                    document.add(new SortedSetDocValuesField(types[j].fieldType.name(), (BytesRef) values.get(k)));
+                                    document.add(new TextField(types[j].fieldType.name(), value.utf8ToString(), Field.Store.NO));
+                                } else {
+                                    assert (false);
+                                }
                             }
                         }
                         docValues.add(values);
                     }
-                    if (hasAllField) {
+                    if (hasAllField || missingBucket) {
                         List<CompositeKey> comb = createListCombinations(docValues);
                         keys.addAll(comb);
                     }
@@ -205,34 +239,54 @@ public class CompositeValuesCollectorQueueTests extends AggregatorTestCase {
                 }
             }
             IndexReader reader = DirectoryReader.open(directory);
-            int size = randomIntBetween(1, keys.size());
+            int size = keys.size() > 1 ? randomIntBetween(1, keys.size()) : 1;
             SingleDimensionValuesSource<?>[] sources = new SingleDimensionValuesSource[types.length];
             for (int i = 0; i < types.length; i++) {
                 final MappedFieldType fieldType = types[i].fieldType;
                 if (types[i].clazz == Long.class) {
-                    sources[i] = new LongValuesSource(bigArrays, fieldType,
-                        context -> DocValues.getSortedNumeric(context.reader(), fieldType.name()), value -> value,
-                        DocValueFormat.RAW, null, size, 1);
+                    sources[i] = new LongValuesSource(
+                        bigArrays,
+                        fieldType,
+                        context -> DocValues.getSortedNumeric(context.reader(), fieldType.name()),
+                        value -> value,
+                        DocValueFormat.RAW,
+                        missingBucket,
+                        size,
+                        1
+                    );
                 } else if (types[i].clazz == Double.class) {
                     sources[i] = new DoubleValuesSource(
-                        bigArrays, fieldType,
+                        bigArrays,
+                        fieldType,
                         context -> FieldData.sortableLongBitsToDoubles(DocValues.getSortedNumeric(context.reader(), fieldType.name())),
-                        DocValueFormat.RAW, null, size, 1
+                        DocValueFormat.RAW,
+                        missingBucket,
+                        size,
+                        1
                     );
                 } else if (types[i].clazz == BytesRef.class) {
                     if (forceMerge) {
                         // we don't create global ordinals but we test this mode when the reader has a single segment
                         // since ordinals are global in this case.
                         sources[i] = new GlobalOrdinalValuesSource(
-                            bigArrays, fieldType,
+                            bigArrays,
+                            fieldType,
                             context -> DocValues.getSortedSet(context.reader(), fieldType.name()),
-                            DocValueFormat.RAW, null, size, 1
+                            DocValueFormat.RAW,
+                            missingBucket,
+                            size,
+                            1
                         );
                     } else {
                         sources[i] = new BinaryValuesSource(
+                            bigArrays,
+                            (b) -> {},
                             fieldType,
                             context -> FieldData.toString(DocValues.getSortedSet(context.reader(), fieldType.name())),
-                            DocValueFormat.RAW, null, size, 1
+                            DocValueFormat.RAW,
+                            missingBucket,
+                            size,
+                            1
                         );
                     }
                 } else {
@@ -241,48 +295,48 @@ public class CompositeValuesCollectorQueueTests extends AggregatorTestCase {
             }
             CompositeKey[] expected = keys.toArray(new CompositeKey[0]);
             Arrays.sort(expected, (a, b) -> compareKey(a, b));
-            CompositeValuesCollectorQueue queue = new CompositeValuesCollectorQueue(sources, size);
-            final SortedDocsProducer docsProducer = sources[0].createSortedDocsProducerOrNull(reader, new MatchAllDocsQuery());
             for (boolean withProducer : new boolean[] {true, false}) {
-                if (withProducer && docsProducer == null) {
-                    continue;
-                }
                 int pos = 0;
                 CompositeKey last = null;
                 while (pos < size) {
-                    queue.clear();
-                    if (last != null) {
-                        queue.setAfter(last.values());
-                    }
-
+                    final CompositeValuesCollectorQueue queue =
+                        new CompositeValuesCollectorQueue(BigArrays.NON_RECYCLING_INSTANCE, sources, size, last);
+                    final SortedDocsProducer docsProducer = sources[0].createSortedDocsProducerOrNull(reader, new MatchAllDocsQuery());
                     for (LeafReaderContext leafReaderContext : reader.leaves()) {
-                        final LeafBucketCollector leafCollector = new LeafBucketCollector() {
-                            @Override
-                            public void collect(int doc, long bucket) throws IOException {
-                                queue.addIfCompetitive();
-                            }
-                        };
-                        if (withProducer) {
+                        if (docsProducer != null && withProducer) {
                             assertEquals(DocIdSet.EMPTY,
                                 docsProducer.processLeaf(new MatchAllDocsQuery(), queue, leafReaderContext, false));
                         } else {
+                            final LeafBucketCollector leafCollector = new LeafBucketCollector() {
+                                @Override
+                                public void collect(int doc, long bucket) throws IOException {
+                                    queue.addIfCompetitive(indexSortSourcePrefix);
+                                }
+                            };
                             final LeafBucketCollector queueCollector = queue.getLeafCollector(leafReaderContext, leafCollector);
                             final Bits liveDocs = leafReaderContext.reader().getLiveDocs();
                             for (int i = 0; i < leafReaderContext.reader().maxDoc(); i++) {
                                 if (liveDocs == null || liveDocs.get(i)) {
-                                    queueCollector.collect(i);
+                                    try {
+                                        queueCollector.collect(i);
+                                    } catch (CollectionTerminatedException exc) {
+                                        assertThat(indexSortSourcePrefix, greaterThan(0));
+                                    }
                                 }
                             }
                         }
                     }
                     assertEquals(size, Math.min(queue.size(), expected.length - pos));
-                    int ptr = 0;
-                    for (int slot : queue.getSortedSlot()) {
-                        CompositeKey key = queue.toCompositeKey(slot);
-                        assertThat(key, equalTo(expected[ptr++]));
-                        last = key;
-                    }
+                    int ptr = pos + (queue.size() - 1);
                     pos += queue.size();
+                    last = null;
+                    while (queue.size() > pos) {
+                        CompositeKey key = queue.toCompositeKey(queue.pop());
+                        if (last == null) {
+                            last = key;
+                        }
+                        assertThat(key, equalTo(expected[ptr--]));
+                    }
                 }
             }
             reader.close();
@@ -310,6 +364,14 @@ public class CompositeValuesCollectorQueueTests extends AggregatorTestCase {
     private static int compareKey(CompositeKey key1, CompositeKey key2) {
         assert key1.size() == key2.size();
         for (int i = 0; i < key1.size(); i++) {
+            if (key1.get(i) == null) {
+                if (key2.get(i) == null) {
+                    continue;
+                }
+                return -1;
+            } else if (key2.get(i) == null) {
+                return 1;
+            }
             Comparable<Object> cmp1 = (Comparable<Object>) key1.get(i);
             int cmp = cmp1.compareTo(key2.get(i));
             if (cmp != 0) {

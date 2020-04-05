@@ -6,13 +6,13 @@
 package org.elasticsearch.xpack.ml.job.persistence;
 
 import org.elasticsearch.ElasticsearchParseException;
-import org.elasticsearch.client.Client;
+import org.elasticsearch.client.OriginSettingClient;
 import org.elasticsearch.common.bytes.BytesReference;
 import org.elasticsearch.common.xcontent.LoggingDeprecationHandler;
 import org.elasticsearch.common.xcontent.NamedXContentRegistry;
 import org.elasticsearch.common.xcontent.XContentFactory;
-import org.elasticsearch.common.xcontent.XContentHelper;
 import org.elasticsearch.common.xcontent.XContentParser;
+import org.elasticsearch.common.xcontent.XContentType;
 import org.elasticsearch.search.SearchHit;
 import org.elasticsearch.xpack.core.ml.job.results.Influencer;
 import org.elasticsearch.xpack.core.ml.job.results.Result;
@@ -21,7 +21,7 @@ import java.io.IOException;
 import java.io.InputStream;
 
 class BatchedInfluencersIterator extends BatchedResultsIterator<Influencer> {
-    BatchedInfluencersIterator(Client client, String jobId) {
+    BatchedInfluencersIterator(OriginSettingClient client, String jobId) {
         super(client, jobId, Influencer.RESULT_TYPE_VALUE);
     }
 
@@ -29,7 +29,7 @@ class BatchedInfluencersIterator extends BatchedResultsIterator<Influencer> {
     protected Result<Influencer> map(SearchHit hit) {
         BytesReference source = hit.getSourceRef();
         try (InputStream stream = source.streamInput();
-             XContentParser parser = XContentFactory.xContent(XContentHelper.xContentType(source)).createParser(NamedXContentRegistry.EMPTY,
+             XContentParser parser = XContentFactory.xContent(XContentType.JSON).createParser(NamedXContentRegistry.EMPTY,
                      LoggingDeprecationHandler.INSTANCE, stream)) {
             Influencer influencer = Influencer.LENIENT_PARSER.apply(parser, null);
             return new Result<>(hit.getIndex(), influencer);

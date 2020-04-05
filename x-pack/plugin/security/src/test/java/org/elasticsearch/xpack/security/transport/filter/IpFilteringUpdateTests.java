@@ -6,7 +6,6 @@
 package org.elasticsearch.xpack.security.transport.filter;
 
 import org.elasticsearch.cluster.ClusterState;
-import org.elasticsearch.common.network.NetworkModule;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.test.ESIntegTestCase.ClusterScope;
 import org.elasticsearch.test.SecurityIntegTestCase;
@@ -84,12 +83,12 @@ public class IpFilteringUpdateTests extends SecurityIntegTestCase {
 
         // check that all is in cluster state
         ClusterState clusterState = client().admin().cluster().prepareState().get().getState();
-        assertThat(clusterState.metaData().settings().get("xpack.security.transport.filter.allow"), is("127.0.0.1"));
-        assertThat(clusterState.metaData().settings().get("xpack.security.transport.filter.deny"), is("127.0.0.8"));
-        assertEquals(Arrays.asList("127.0.0.1"), clusterState.metaData().settings().getAsList("xpack.security.http.filter.allow"));
-        assertEquals(Arrays.asList("127.0.0.8"), clusterState.metaData().settings().getAsList("xpack.security.http.filter.deny"));
-        assertThat(clusterState.metaData().settings().get("transport.profiles.client.xpack.security.filter.allow"), is("127.0.0.1"));
-        assertThat(clusterState.metaData().settings().get("transport.profiles.client.xpack.security.filter.deny"), is("127.0.0.8"));
+        assertThat(clusterState.metadata().settings().get("xpack.security.transport.filter.allow"), is("127.0.0.1"));
+        assertThat(clusterState.metadata().settings().get("xpack.security.transport.filter.deny"), is("127.0.0.8"));
+        assertEquals(Arrays.asList("127.0.0.1"), clusterState.metadata().settings().getAsList("xpack.security.http.filter.allow"));
+        assertEquals(Arrays.asList("127.0.0.8"), clusterState.metadata().settings().getAsList("xpack.security.http.filter.deny"));
+        assertThat(clusterState.metadata().settings().get("transport.profiles.client.xpack.security.filter.allow"), is("127.0.0.1"));
+        assertThat(clusterState.metadata().settings().get("transport.profiles.client.xpack.security.filter.deny"), is("127.0.0.8"));
 
         // now disable ip filtering dynamically and make sure nothing is rejected
         settings = Settings.builder()
@@ -102,12 +101,12 @@ public class IpFilteringUpdateTests extends SecurityIntegTestCase {
 
         // disabling should not have any effect on the cluster state settings
         clusterState = client().admin().cluster().prepareState().get().getState();
-        assertThat(clusterState.metaData().settings().get("xpack.security.transport.filter.allow"), is("127.0.0.1"));
-        assertThat(clusterState.metaData().settings().get("xpack.security.transport.filter.deny"), is("127.0.0.8"));
-        assertEquals(Arrays.asList("127.0.0.1"), clusterState.metaData().settings().getAsList("xpack.security.http.filter.allow"));
-        assertEquals(Arrays.asList("127.0.0.8"), clusterState.metaData().settings().getAsList("xpack.security.http.filter.deny"));
-        assertThat(clusterState.metaData().settings().get("transport.profiles.client.xpack.security.filter.allow"), is("127.0.0.1"));
-        assertThat(clusterState.metaData().settings().get("transport.profiles.client.xpack.security.filter.deny"), is("127.0.0.8"));
+        assertThat(clusterState.metadata().settings().get("xpack.security.transport.filter.allow"), is("127.0.0.1"));
+        assertThat(clusterState.metadata().settings().get("xpack.security.transport.filter.deny"), is("127.0.0.8"));
+        assertEquals(Arrays.asList("127.0.0.1"), clusterState.metadata().settings().getAsList("xpack.security.http.filter.allow"));
+        assertEquals(Arrays.asList("127.0.0.8"), clusterState.metadata().settings().getAsList("xpack.security.http.filter.deny"));
+        assertThat(clusterState.metadata().settings().get("transport.profiles.client.xpack.security.filter.allow"), is("127.0.0.1"));
+        assertThat(clusterState.metadata().settings().get("transport.profiles.client.xpack.security.filter.deny"), is("127.0.0.8"));
 
         // now also disable for HTTP
         if (httpEnabled) {
@@ -122,7 +121,7 @@ public class IpFilteringUpdateTests extends SecurityIntegTestCase {
         }
     }
 
-    // issue #762, occured because in the above test we use HTTP and transport
+    // issue #762, occurred because in the above test we use HTTP and transport
     public void testThatDisablingIpFilterWorksAsExpected() throws Exception {
         Settings settings = Settings.builder()
                 .put("xpack.security.transport.filter.deny", "127.0.0.8")

@@ -8,61 +8,69 @@ package org.elasticsearch.xpack.core.action;
 import org.elasticsearch.action.ActionListener;
 import org.elasticsearch.action.support.ActionFilters;
 import org.elasticsearch.action.support.HandledTransportAction;
-import org.elasticsearch.cluster.metadata.IndexNameExpressionResolver;
+import org.elasticsearch.client.node.NodeClient;
 import org.elasticsearch.common.inject.Inject;
-import org.elasticsearch.common.settings.Settings;
-import org.elasticsearch.license.XPackInfoResponse;
 import org.elasticsearch.license.License;
 import org.elasticsearch.license.LicenseService;
-import org.elasticsearch.threadpool.ThreadPool;
+import org.elasticsearch.protocol.xpack.XPackInfoRequest;
+import org.elasticsearch.protocol.xpack.XPackInfoResponse;
+import org.elasticsearch.protocol.xpack.XPackInfoResponse.FeatureSetsInfo;
+import org.elasticsearch.protocol.xpack.XPackInfoResponse.FeatureSetsInfo.FeatureSet;
+import org.elasticsearch.protocol.xpack.XPackInfoResponse.LicenseInfo;
+import org.elasticsearch.tasks.Task;
 import org.elasticsearch.transport.TransportService;
 import org.elasticsearch.xpack.core.XPackBuild;
-import org.elasticsearch.xpack.core.XPackFeatureSet;
-import org.elasticsearch.license.XPackInfoResponse.FeatureSetsInfo.FeatureSet;
-import org.elasticsearch.license.XPackInfoResponse.LicenseInfo;
 
-import java.util.Set;
-import java.util.stream.Collectors;
+import java.util.HashSet;
+import java.util.List;
 
 public class TransportXPackInfoAction extends HandledTransportAction<XPackInfoRequest, XPackInfoResponse> {
 
     private final LicenseService licenseService;
-    private final Set<XPackFeatureSet> featureSets;
+    private final NodeClient client;
+    private final List<XPackInfoFeatureAction> infoActions;
 
     @Inject
-    public TransportXPackInfoAction(Settings settings, ThreadPool threadPool, TransportService transportService,
-                                    ActionFilters actionFilters, IndexNameExpressionResolver indexNameExpressionResolver,
-                                    LicenseService licenseService, Set<XPackFeatureSet> featureSets) {
-        super(settings, XPackInfoAction.NAME, threadPool, transportService, actionFilters, indexNameExpressionResolver,
-                XPackInfoRequest::new);
+    public TransportXPackInfoAction(TransportService transportService, ActionFilters actionFilters, LicenseService licenseService,
+                                    NodeClient client) {
+        super(XPackInfoAction.NAME, transportService, actionFilters, XPackInfoRequest::new);
         this.licenseService = licenseService;
-        this.featureSets = featureSets;
+        this.client = client;
+        this.infoActions = infoActions();
+    }
+
+    // overrideable for tests
+    protected List<XPackInfoFeatureAction> infoActions() {
+        return XPackInfoFeatureAction.ALL;
     }
 
     @Override
-    protected void doExecute(XPackInfoRequest request, ActionListener<XPackInfoResponse> listener) {
+    protected void doExecute(Task task, XPackInfoRequest request, ActionListener<XPackInfoResponse> listener) {
 
 
         XPackInfoResponse.BuildInfo buildInfo = null;
         if (request.getCategories().contains(XPackInfoRequest.Category.BUILD)) {
-            buildInfo = new XPackInfoResponse.BuildInfo(XPackBuild.CURRENT);
+            buildInfo = new XPackInfoResponse.BuildInfo(XPackBuild.CURRENT.shortHash(), XPackBuild.CURRENT.date());
         }
 
         LicenseInfo licenseInfo = null;
         if (request.getCategories().contains(XPackInfoRequest.Category.LICENSE)) {
             License license = licenseService.getLicense();
             if (license != null) {
-                licenseInfo = new LicenseInfo(license);
+                licenseInfo = new LicenseInfo(license.uid(), license.type(), license.operationMode().description(),
+                        license.status(), license.expiryDate());
             }
         }
 
-        XPackInfoResponse.FeatureSetsInfo featureSetsInfo = null;
+        FeatureSetsInfo featureSetsInfo = null;
         if (request.getCategories().contains(XPackInfoRequest.Category.FEATURES)) {
-            Set<FeatureSet> featureSets = this.featureSets.stream().map(fs ->
-                    new FeatureSet(fs.name(), request.isVerbose() ? fs.description() : null, fs.available(), fs.enabled(),
-                            request.isVerbose() ? fs.nativeCodeInfo() : null))
-                    .collect(Collectors.toSet());
-            featureSetsInfo = new XPackInfoResponse.FeatureSetsInfo(featureSets);
+            var featureSets = new HashSet<FeatureSet>();
+            for (var infoAction : infoActions) {
+                // local actions are executed directly, not on a separate thread, so no thread safe collection is necessary
+                client.executeLocally(infoAction, request,
+                    ActionListener.wrap(response -> featureSets.add(response.getInfo()), listener::onFailure));
+            }
+            featureSetsInfo = new FeatureSetsInfo(featureSets);
         }
 
         listener.onResponse(new XPackInfoResponse(buildInfo, licenseInfo, featureSetsInfo));

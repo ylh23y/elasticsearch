@@ -19,11 +19,14 @@
 
 package org.elasticsearch.common.blobstore.fs;
 
-import org.elasticsearch.core.internal.io.IOUtils;
-import org.elasticsearch.common.blobstore.BlobMetaData;
+import org.elasticsearch.common.UUIDs;
+import org.elasticsearch.common.blobstore.BlobContainer;
+import org.elasticsearch.common.blobstore.BlobMetadata;
 import org.elasticsearch.common.blobstore.BlobPath;
+import org.elasticsearch.common.blobstore.DeleteResult;
 import org.elasticsearch.common.blobstore.support.AbstractBlobContainer;
-import org.elasticsearch.common.blobstore.support.PlainBlobMetaData;
+import org.elasticsearch.common.blobstore.support.PlainBlobMetadata;
+import org.elasticsearch.core.internal.io.IOUtils;
 import org.elasticsearch.core.internal.io.Streams;
 
 import java.io.BufferedInputStream;
@@ -41,8 +44,11 @@ import java.nio.file.SimpleFileVisitor;
 import java.nio.file.StandardCopyOption;
 import java.nio.file.StandardOpenOption;
 import java.nio.file.attribute.BasicFileAttributes;
+import java.util.Collections;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicLong;
 
 import static java.util.Collections.unmodifiableMap;
 
@@ -56,8 +62,9 @@ import static java.util.Collections.unmodifiableMap;
  */
 public class FsBlobContainer extends AbstractBlobContainer {
 
-    protected final FsBlobStore blobStore;
+    private static final String TEMP_FILE_PREFIX = "pending-";
 
+    protected final FsBlobStore blobStore;
     protected final Path path;
 
     public FsBlobContainer(FsBlobStore blobStore, BlobPath blobPath, Path path) {
@@ -67,21 +74,18 @@ public class FsBlobContainer extends AbstractBlobContainer {
     }
 
     @Override
-    public Map<String, BlobMetaData> listBlobs() throws IOException {
+    public Map<String, BlobMetadata> listBlobs() throws IOException {
         return listBlobsByPrefix(null);
     }
 
     @Override
-    public Map<String, BlobMetaData> listBlobsByPrefix(String blobNamePrefix) throws IOException {
-        // If we get duplicate files we should just take the last entry
-        Map<String, BlobMetaData> builder = new HashMap<>();
-
-        blobNamePrefix = blobNamePrefix == null ? "" : blobNamePrefix;
-        try (DirectoryStream<Path> stream = Files.newDirectoryStream(path, blobNamePrefix + "*")) {
+    public Map<String, BlobContainer> children() throws IOException {
+        Map<String, BlobContainer> builder = new HashMap<>();
+        try (DirectoryStream<Path> stream = Files.newDirectoryStream(path)) {
             for (Path file : stream) {
-                final BasicFileAttributes attrs = Files.readAttributes(file, BasicFileAttributes.class);
-                if (attrs.isRegularFile()) {
-                    builder.put(file.getFileName().toString(), new PlainBlobMetaData(file.getFileName().toString(), attrs.size()));
+                if (Files.isDirectory(file)) {
+                    final String name = file.getFileName().toString();
+                    builder.put(name, new FsBlobContainer(blobStore, path().add(name), file));
                 }
             }
         }
@@ -89,26 +93,53 @@ public class FsBlobContainer extends AbstractBlobContainer {
     }
 
     @Override
-    public void deleteBlob(String blobName) throws IOException {
-        Path blobPath = path.resolve(blobName);
-        if (Files.isDirectory(blobPath)) {
-            // delete directory recursively as long as it is empty (only contains empty directories),
-            // which is the reason we aren't deleting any files, only the directories on the post-visit
-            Files.walkFileTree(blobPath, new SimpleFileVisitor<Path>() {
-                @Override
-                public FileVisitResult postVisitDirectory(Path dir, IOException exc) throws IOException {
-                    Files.delete(dir);
-                    return FileVisitResult.CONTINUE;
+    public Map<String, BlobMetadata> listBlobsByPrefix(String blobNamePrefix) throws IOException {
+        Map<String, BlobMetadata> builder = new HashMap<>();
+
+        blobNamePrefix = blobNamePrefix == null ? "" : blobNamePrefix;
+        try (DirectoryStream<Path> stream = Files.newDirectoryStream(path, blobNamePrefix + "*")) {
+            for (Path file : stream) {
+                final BasicFileAttributes attrs;
+                try {
+                    attrs = Files.readAttributes(file, BasicFileAttributes.class);
+                } catch (FileNotFoundException | NoSuchFileException e) {
+                    // The file was concurrently deleted between listing files and trying to get its attributes so we skip it here
+                    continue;
                 }
-            });
-        } else {
-            Files.delete(blobPath);
+                if (attrs.isRegularFile()) {
+                    builder.put(file.getFileName().toString(), new PlainBlobMetadata(file.getFileName().toString(), attrs.size()));
+                }
+            }
         }
+        return unmodifiableMap(builder);
     }
 
     @Override
-    public boolean blobExists(String blobName) {
-        return Files.exists(path.resolve(blobName));
+    public DeleteResult delete() throws IOException {
+        final AtomicLong filesDeleted = new AtomicLong(0L);
+        final AtomicLong bytesDeleted = new AtomicLong(0L);
+        Files.walkFileTree(path, new SimpleFileVisitor<>() {
+            @Override
+            public FileVisitResult postVisitDirectory(Path dir, IOException impossible) throws IOException {
+                assert impossible == null;
+                Files.delete(dir);
+                return FileVisitResult.CONTINUE;
+            }
+
+            @Override
+            public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) throws IOException {
+                Files.delete(file);
+                filesDeleted.incrementAndGet();
+                bytesDeleted.addAndGet(attrs.size());
+                return FileVisitResult.CONTINUE;
+            }
+        });
+        return new DeleteResult(filesDeleted.get(), bytesDeleted.get());
+    }
+
+    @Override
+    public void deleteBlobsIgnoringIfNotExists(List<String> blobNames) throws IOException {
+        IOUtils.rm(blobNames.stream().map(path::resolve).toArray(Path[]::new));
     }
 
     @Override
@@ -122,9 +153,9 @@ public class FsBlobContainer extends AbstractBlobContainer {
     }
 
     @Override
-    public void writeBlob(String blobName, InputStream inputStream, long blobSize) throws IOException {
-        if (blobExists(blobName)) {
-            throw new FileAlreadyExistsException("blob [" + blobName + "] already exists, cannot overwrite");
+    public void writeBlob(String blobName, InputStream inputStream, long blobSize, boolean failIfAlreadyExists) throws IOException {
+        if (failIfAlreadyExists == false) {
+            deleteBlobsIgnoringIfNotExists(Collections.singletonList(blobName));
         }
         final Path file = path.resolve(blobName);
         try (OutputStream outputStream = Files.newOutputStream(file, StandardOpenOption.CREATE_NEW)) {
@@ -135,15 +166,54 @@ public class FsBlobContainer extends AbstractBlobContainer {
     }
 
     @Override
-    public void move(String source, String target) throws IOException {
-        Path sourcePath = path.resolve(source);
-        Path targetPath = path.resolve(target);
+    public void writeBlobAtomic(final String blobName, final InputStream inputStream, final long blobSize, boolean failIfAlreadyExists)
+        throws IOException {
+        final String tempBlob = tempBlobName(blobName);
+        final Path tempBlobPath = path.resolve(tempBlob);
+        try {
+            try (OutputStream outputStream = Files.newOutputStream(tempBlobPath, StandardOpenOption.CREATE_NEW)) {
+                Streams.copy(inputStream, outputStream);
+            }
+            IOUtils.fsync(tempBlobPath, false);
+            moveBlobAtomic(tempBlob, blobName, failIfAlreadyExists);
+        } catch (IOException ex) {
+            try {
+                deleteBlobsIgnoringIfNotExists(Collections.singletonList(tempBlob));
+            } catch (IOException e) {
+                ex.addSuppressed(e);
+            }
+            throw ex;
+        } finally {
+            IOUtils.fsync(path, true);
+        }
+    }
+
+    public void moveBlobAtomic(final String sourceBlobName, final String targetBlobName, final boolean failIfAlreadyExists)
+        throws IOException {
+        final Path sourceBlobPath = path.resolve(sourceBlobName);
+        final Path targetBlobPath = path.resolve(targetBlobName);
         // If the target file exists then Files.move() behaviour is implementation specific
         // the existing file might be replaced or this method fails by throwing an IOException.
-        if (Files.exists(targetPath)) {
-            throw new FileAlreadyExistsException("blob [" + targetPath + "] already exists, cannot overwrite");
+        if (Files.exists(targetBlobPath)) {
+            if (failIfAlreadyExists) {
+                throw new FileAlreadyExistsException("blob [" + targetBlobPath + "] already exists, cannot overwrite");
+            } else {
+                deleteBlobsIgnoringIfNotExists(Collections.singletonList(targetBlobName));
+            }
         }
-        Files.move(sourcePath, targetPath, StandardCopyOption.ATOMIC_MOVE);
-        IOUtils.fsync(path, true);
+        Files.move(sourceBlobPath, targetBlobPath, StandardCopyOption.ATOMIC_MOVE);
+    }
+
+    public static String tempBlobName(final String blobName) {
+        return "pending-" + blobName + "-" + UUIDs.randomBase64UUID();
+    }
+
+    /**
+     * Returns true if the blob is a leftover temporary blob.
+     *
+     * The temporary blobs might be left after failed atomic write operation.
+     */
+    public static boolean isTempBlobName(final String blobName) {
+        return blobName.startsWith(TEMP_FILE_PREFIX);
     }
 }

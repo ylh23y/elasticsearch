@@ -5,26 +5,16 @@
  */
 package org.elasticsearch.xpack.core.watcher.transport.actions.service;
 
-import org.elasticsearch.action.Action;
-import org.elasticsearch.client.ElasticsearchClient;
+import org.elasticsearch.action.ActionType;
+import org.elasticsearch.action.support.master.AcknowledgedResponse;
 
 
-public class WatcherServiceAction extends Action<WatcherServiceRequest, WatcherServiceResponse, WatcherServiceRequestBuilder> {
+public class WatcherServiceAction extends ActionType<AcknowledgedResponse> {
 
     public static final WatcherServiceAction INSTANCE = new WatcherServiceAction();
     public static final String NAME = "cluster:admin/xpack/watcher/service";
 
     private WatcherServiceAction() {
-        super(NAME);
-    }
-
-    @Override
-    public WatcherServiceResponse newResponse() {
-        return new WatcherServiceResponse();
-    }
-
-    @Override
-    public WatcherServiceRequestBuilder newRequestBuilder(ElasticsearchClient client) {
-        return new WatcherServiceRequestBuilder(client);
+        super(NAME, AcknowledgedResponse::new);
     }
 }

@@ -14,7 +14,7 @@ import org.elasticsearch.client.ElasticsearchClient;
  * Request builder used to populate a {@link SamlAuthenticateRequest}
  */
 public final class SamlAuthenticateRequestBuilder
-        extends ActionRequestBuilder<SamlAuthenticateRequest, SamlAuthenticateResponse, SamlAuthenticateRequestBuilder> {
+        extends ActionRequestBuilder<SamlAuthenticateRequest, SamlAuthenticateResponse> {
 
     public SamlAuthenticateRequestBuilder(ElasticsearchClient client) {
         super(client, SamlAuthenticateAction.INSTANCE, new SamlAuthenticateRequest());
@@ -27,6 +27,11 @@ public final class SamlAuthenticateRequestBuilder
 
     public SamlAuthenticateRequestBuilder validRequestIds(List<String> validRequestIds) {
         request.setValidRequestIds(validRequestIds);
+        return this;
+    }
+
+    public SamlAuthenticateRequestBuilder authenticatingRealm(String realm) {
+        request.setRealm(realm);
         return this;
     }
 }

@@ -5,26 +5,15 @@
  */
 package org.elasticsearch.xpack.core.action;
 
-import org.elasticsearch.action.Action;
-import org.elasticsearch.client.ElasticsearchClient;
-import org.elasticsearch.license.XPackInfoResponse;
+import org.elasticsearch.action.ActionType;
+import org.elasticsearch.protocol.xpack.XPackInfoResponse;
 
-public class XPackInfoAction extends Action<XPackInfoRequest, XPackInfoResponse, XPackInfoRequestBuilder> {
+public class XPackInfoAction extends ActionType<XPackInfoResponse> {
 
     public static final String NAME = "cluster:monitor/xpack/info";
     public static final XPackInfoAction INSTANCE = new XPackInfoAction();
 
     public XPackInfoAction() {
-        super(NAME);
-    }
-
-    @Override
-    public XPackInfoRequestBuilder newRequestBuilder(ElasticsearchClient client) {
-        return new XPackInfoRequestBuilder(client);
-    }
-
-    @Override
-    public XPackInfoResponse newResponse() {
-        return new XPackInfoResponse();
+        super(NAME, XPackInfoResponse::new);
     }
 }

@@ -5,8 +5,7 @@
  */
 package org.elasticsearch.xpack.core.ml.action;
 
-import org.elasticsearch.Version;
-import org.elasticsearch.action.Action;
+import org.elasticsearch.action.ActionType;
 import org.elasticsearch.action.ActionRequestBuilder;
 import org.elasticsearch.action.ActionRequestValidationException;
 import org.elasticsearch.action.support.tasks.BaseTasksRequest;
@@ -22,32 +21,21 @@ import org.elasticsearch.common.xcontent.ToXContentObject;
 import org.elasticsearch.common.xcontent.XContentBuilder;
 import org.elasticsearch.common.xcontent.XContentParser;
 import org.elasticsearch.tasks.Task;
-import org.elasticsearch.xpack.core.ml.MLMetadataField;
+import org.elasticsearch.xpack.core.ml.MlTasks;
 import org.elasticsearch.xpack.core.ml.datafeed.DatafeedConfig;
 import org.elasticsearch.xpack.core.ml.utils.ExceptionsHelper;
 
 import java.io.IOException;
 import java.util.Objects;
 
-public class StopDatafeedAction
-        extends Action<StopDatafeedAction.Request, StopDatafeedAction.Response, StopDatafeedAction.RequestBuilder> {
+public class StopDatafeedAction extends ActionType<StopDatafeedAction.Response> {
 
     public static final StopDatafeedAction INSTANCE = new StopDatafeedAction();
     public static final String NAME = "cluster:admin/xpack/ml/datafeed/stop";
     public static final TimeValue DEFAULT_TIMEOUT = TimeValue.timeValueMinutes(5);
 
     private StopDatafeedAction() {
-        super(NAME);
-    }
-
-    @Override
-    public RequestBuilder newRequestBuilder(ElasticsearchClient client) {
-        return new RequestBuilder(client, this);
-    }
-
-    @Override
-    public Response newResponse() {
-        return new Response();
+        super(NAME, StopDatafeedAction.Response::new);
     }
 
     public static class Request extends BaseTasksRequest<Request> implements ToXContentObject {
@@ -56,8 +44,7 @@ public class StopDatafeedAction
         public static final ParseField FORCE = new ParseField("force");
         public static final ParseField ALLOW_NO_DATAFEEDS = new ParseField("allow_no_datafeeds");
 
-        public static ObjectParser<Request, Void> PARSER = new ObjectParser<>(NAME, Request::new);
-
+        public static final ObjectParser<Request, Void> PARSER = new ObjectParser<>(NAME, Request::new);
         static {
             PARSER.declareString((request, datafeedId) -> request.datafeedId = datafeedId, DatafeedConfig.ID);
             PARSER.declareString((request, val) ->
@@ -79,17 +66,25 @@ public class StopDatafeedAction
         }
 
         private String datafeedId;
-        private String[] resolvedStartedDatafeedIds;
+        private String[] resolvedStartedDatafeedIds = new String[] {};
         private TimeValue stopTimeout = DEFAULT_TIMEOUT;
         private boolean force = false;
         private boolean allowNoDatafeeds = true;
 
         public Request(String datafeedId) {
             this.datafeedId = ExceptionsHelper.requireNonNull(datafeedId, DatafeedConfig.ID.getPreferredName());
-            this.resolvedStartedDatafeedIds = new String[] { datafeedId };
         }
 
         public Request() {
+        }
+
+        public Request(StreamInput in) throws IOException {
+            super(in);
+            datafeedId = in.readString();
+            resolvedStartedDatafeedIds = in.readStringArray();
+            stopTimeout = in.readTimeValue();
+            force = in.readBoolean();
+            allowNoDatafeeds = in.readBoolean();
         }
 
         public String getDatafeedId() {
@@ -131,7 +126,7 @@ public class StopDatafeedAction
         @Override
         public boolean match(Task task) {
             for (String id : resolvedStartedDatafeedIds) {
-                String expectedDescription = MLMetadataField.datafeedTaskId(id);
+                String expectedDescription = MlTasks.datafeedTaskId(id);
                 if (task instanceof StartDatafeedAction.DatafeedTaskMatcher && expectedDescription.equals(task.getDescription())){
                     return true;
                 }
@@ -145,27 +140,13 @@ public class StopDatafeedAction
         }
 
         @Override
-        public void readFrom(StreamInput in) throws IOException {
-            super.readFrom(in);
-            datafeedId = in.readString();
-            resolvedStartedDatafeedIds = in.readStringArray();
-            stopTimeout = in.readTimeValue();
-            force = in.readBoolean();
-            if (in.getVersion().onOrAfter(Version.V_6_1_0)) {
-                allowNoDatafeeds = in.readBoolean();
-            }
-        }
-
-        @Override
         public void writeTo(StreamOutput out) throws IOException {
             super.writeTo(out);
             out.writeString(datafeedId);
             out.writeStringArray(resolvedStartedDatafeedIds);
             out.writeTimeValue(stopTimeout);
             out.writeBoolean(force);
-            if (out.getVersion().onOrAfter(Version.V_6_1_0)) {
-                out.writeBoolean(allowNoDatafeeds);
-            }
+            out.writeBoolean(allowNoDatafeeds);
         }
 
         @Override
@@ -202,7 +183,7 @@ public class StopDatafeedAction
 
     public static class Response extends BaseTasksResponse implements Writeable {
 
-        private boolean stopped;
+        private final boolean stopped;
 
         public Response(boolean stopped) {
             super(null, null);
@@ -210,21 +191,7 @@ public class StopDatafeedAction
         }
 
         public Response(StreamInput in) throws IOException {
-            super(null, null);
-            readFrom(in);
-        }
-
-        public Response() {
-            super(null, null);
-        }
-
-        public boolean isStopped() {
-            return stopped;
-        }
-
-        @Override
-        public void readFrom(StreamInput in) throws IOException {
-            super.readFrom(in);
+            super(in);
             stopped = in.readBoolean();
         }
 
@@ -233,9 +200,14 @@ public class StopDatafeedAction
             super.writeTo(out);
             out.writeBoolean(stopped);
         }
+
+        public boolean isStopped() {
+            return stopped;
+        }
+
     }
 
-    static class RequestBuilder extends ActionRequestBuilder<Request, Response, RequestBuilder> {
+    static class RequestBuilder extends ActionRequestBuilder<Request, Response> {
 
         RequestBuilder(ElasticsearchClient client, StopDatafeedAction action) {
             super(client, action, new Request());

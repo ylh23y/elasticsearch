@@ -5,8 +5,7 @@
  */
 package org.elasticsearch.xpack.core.ml.action;
 
-import org.elasticsearch.Version;
-import org.elasticsearch.action.Action;
+import org.elasticsearch.action.ActionType;
 import org.elasticsearch.action.ActionRequestBuilder;
 import org.elasticsearch.action.support.tasks.BaseTasksResponse;
 import org.elasticsearch.client.ElasticsearchClient;
@@ -24,27 +23,16 @@ import java.io.IOException;
 import java.util.List;
 import java.util.Objects;
 
-public class UpdateProcessAction extends
-        Action<UpdateProcessAction.Request, UpdateProcessAction.Response, UpdateProcessAction.RequestBuilder> {
+public class UpdateProcessAction extends ActionType<UpdateProcessAction.Response> {
 
     public static final UpdateProcessAction INSTANCE = new UpdateProcessAction();
     public static final String NAME = "cluster:internal/xpack/ml/job/update/process";
 
     private UpdateProcessAction() {
-        super(NAME);
+        super(NAME, UpdateProcessAction.Response::new);
     }
 
-    @Override
-    public RequestBuilder newRequestBuilder(ElasticsearchClient client) {
-        return new RequestBuilder(client, this);
-    }
-
-    @Override
-    public Response newResponse() {
-        return new Response();
-    }
-
-    static class RequestBuilder extends ActionRequestBuilder<Request, Response, RequestBuilder> {
+    static class RequestBuilder extends ActionRequestBuilder<Request, Response> {
 
         RequestBuilder(ElasticsearchClient client, UpdateProcessAction action) {
             super(client, action, new Request());
@@ -53,16 +41,15 @@ public class UpdateProcessAction extends
 
     public static class Response extends BaseTasksResponse implements StatusToXContentObject, Writeable {
 
-        private boolean isUpdated;
+        private final boolean isUpdated;
 
         public Response() {
             super(null, null);
             this.isUpdated = true;
         }
 
-        @Override
-        public void readFrom(StreamInput in) throws IOException {
-            super.readFrom(in);
+        public Response(StreamInput in) throws IOException {
+            super(in);
             isUpdated = in.readBoolean();
         }
 
@@ -115,7 +102,29 @@ public class UpdateProcessAction extends
         private MlFilter filter;
         private boolean updateScheduledEvents = false;
 
-        public Request() {
+        public Request() {}
+
+        public Request(StreamInput in) throws IOException {
+            super(in);
+            modelPlotConfig = in.readOptionalWriteable(ModelPlotConfig::new);
+            if (in.readBoolean()) {
+                detectorUpdates = in.readList(JobUpdate.DetectorUpdate::new);
+            }
+            filter = in.readOptionalWriteable(MlFilter::new);
+            updateScheduledEvents = in.readBoolean();
+        }
+
+        @Override
+        public void writeTo(StreamOutput out) throws IOException {
+            super.writeTo(out);
+            out.writeOptionalWriteable(modelPlotConfig);
+            boolean hasDetectorUpdates = detectorUpdates != null;
+            out.writeBoolean(hasDetectorUpdates);
+            if (hasDetectorUpdates) {
+                out.writeList(detectorUpdates);
+            }
+            out.writeOptionalWriteable(filter);
+            out.writeBoolean(updateScheduledEvents);
         }
 
         public Request(String jobId, ModelPlotConfig modelPlotConfig, List<JobUpdate.DetectorUpdate> detectorUpdates, MlFilter filter,
@@ -141,34 +150,6 @@ public class UpdateProcessAction extends
 
         public boolean isUpdateScheduledEvents() {
             return updateScheduledEvents;
-        }
-
-        @Override
-        public void readFrom(StreamInput in) throws IOException {
-            super.readFrom(in);
-            modelPlotConfig = in.readOptionalWriteable(ModelPlotConfig::new);
-            if (in.readBoolean()) {
-                detectorUpdates = in.readList(JobUpdate.DetectorUpdate::new);
-            }
-            if (in.getVersion().onOrAfter(Version.V_6_2_0)) {
-                filter = in.readOptionalWriteable(MlFilter::new);
-                updateScheduledEvents = in.readBoolean();
-            }
-        }
-
-        @Override
-        public void writeTo(StreamOutput out) throws IOException {
-            super.writeTo(out);
-            out.writeOptionalWriteable(modelPlotConfig);
-            boolean hasDetectorUpdates = detectorUpdates != null;
-            out.writeBoolean(hasDetectorUpdates);
-            if (hasDetectorUpdates) {
-                out.writeList(detectorUpdates);
-            }
-            if (out.getVersion().onOrAfter(Version.V_6_2_0)) {
-                out.writeOptionalWriteable(filter);
-                out.writeBoolean(updateScheduledEvents);
-            }
         }
 
         @Override

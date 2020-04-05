@@ -26,15 +26,11 @@ import org.apache.lucene.analysis.miscellaneous.DuplicateByteSequenceSpotter;
 import org.apache.lucene.analysis.tokenattributes.CharTermAttribute;
 import org.apache.lucene.index.IndexReader;
 import org.apache.lucene.index.LeafReaderContext;
-import org.apache.lucene.index.Terms;
-import org.apache.lucene.search.highlight.TokenStreamFromTermVector;
 import org.apache.lucene.util.BytesRef;
 import org.apache.lucene.util.BytesRefBuilder;
 import org.elasticsearch.common.lease.Releasables;
 import org.elasticsearch.common.util.BytesRefHash;
 import org.elasticsearch.index.mapper.MappedFieldType;
-import org.elasticsearch.index.mapper.MapperService;
-import org.elasticsearch.index.shard.IndexShard;
 import org.elasticsearch.search.DocValueFormat;
 import org.elasticsearch.search.aggregations.Aggregator;
 import org.elasticsearch.search.aggregations.AggregatorFactories;
@@ -80,8 +76,8 @@ public class SignificantTextAggregator extends BucketsAggregator {
             BucketCountThresholds bucketCountThresholds, IncludeExclude.StringFilter includeExclude,
             SignificanceHeuristic significanceHeuristic, SignificantTextAggregatorFactory termsAggFactory,
             String fieldName, String [] sourceFieldNames, boolean filterDuplicateText,
-            Map<String, Object> metaData) throws IOException {
-        super(name, factories, context, parent, pipelineAggregators, metaData);
+            Map<String, Object> metadata) throws IOException {
+        super(name, factories, context, parent, pipelineAggregators, metadata);
         this.bucketCountThresholds = bucketCountThresholds;
         this.includeExclude = includeExclude;
         this.significanceHeuristic = significanceHeuristic;
@@ -205,7 +201,7 @@ public class SignificantTextAggregator extends BucketsAggregator {
             }
 
             if (spare == null) {
-                spare = new SignificantStringTerms.Bucket(new BytesRef(), 0, 0, 0, 0, null, format);
+                spare = new SignificantStringTerms.Bucket(new BytesRef(), 0, 0, 0, 0, null, format, 0);
             }
 
             bucketOrds.get(i, spare.termBytes);
@@ -236,8 +232,8 @@ public class SignificantTextAggregator extends BucketsAggregator {
         }
 
         return new SignificantStringTerms( name, bucketCountThresholds.getRequiredSize(),
-                bucketCountThresholds.getMinDocCount(), pipelineAggregators(),
-                metaData(), format, subsetSize, supersetSize, significanceHeuristic, Arrays.asList(list));
+                bucketCountThresholds.getMinDocCount(),
+                metadata(), format, subsetSize, supersetSize, significanceHeuristic, Arrays.asList(list));
     }
 
 
@@ -248,7 +244,7 @@ public class SignificantTextAggregator extends BucketsAggregator {
         IndexReader topReader = searcher.getIndexReader();
         int supersetSize = topReader.numDocs();
         return new SignificantStringTerms(name, bucketCountThresholds.getRequiredSize(), bucketCountThresholds.getMinDocCount(),
-                pipelineAggregators(), metaData(), format, 0, supersetSize, significanceHeuristic, emptyList());
+                metadata(), format, 0, supersetSize, significanceHeuristic, emptyList());
     }
 
     @Override

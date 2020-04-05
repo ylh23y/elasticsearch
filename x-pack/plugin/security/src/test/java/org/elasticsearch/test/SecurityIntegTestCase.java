@@ -7,6 +7,7 @@ package org.elasticsearch.test;
 
 import io.netty.util.ThreadDeathWatcher;
 import io.netty.util.concurrent.GlobalEventExecutor;
+import org.elasticsearch.Version;
 import org.elasticsearch.action.admin.cluster.health.ClusterHealthResponse;
 import org.elasticsearch.action.admin.cluster.node.info.NodeInfo;
 import org.elasticsearch.action.admin.cluster.node.info.NodesInfoResponse;
@@ -16,18 +17,17 @@ import org.elasticsearch.action.admin.indices.get.GetIndexRequest;
 import org.elasticsearch.action.admin.indices.get.GetIndexResponse;
 import org.elasticsearch.action.support.IndicesOptions;
 import org.elasticsearch.client.Client;
+import org.elasticsearch.client.RestHighLevelClient;
 import org.elasticsearch.client.node.NodeClient;
 import org.elasticsearch.cluster.ClusterState;
 import org.elasticsearch.cluster.health.ClusterHealthStatus;
-import org.elasticsearch.cluster.metadata.AliasOrIndex;
-import org.elasticsearch.cluster.metadata.MetaData;
+import org.elasticsearch.cluster.metadata.IndexAbstraction;
+import org.elasticsearch.cluster.metadata.Metadata;
 import org.elasticsearch.cluster.routing.IndexRoutingTable;
 import org.elasticsearch.common.Strings;
-import org.elasticsearch.common.network.NetworkAddress;
 import org.elasticsearch.common.settings.MockSecureSettings;
 import org.elasticsearch.common.settings.SecureString;
 import org.elasticsearch.common.settings.Settings;
-import org.elasticsearch.common.transport.TransportAddress;
 import org.elasticsearch.common.xcontent.ToXContent;
 import org.elasticsearch.common.xcontent.XContentBuilder;
 import org.elasticsearch.common.xcontent.json.JsonXContent;
@@ -35,20 +35,17 @@ import org.elasticsearch.gateway.GatewayService;
 import org.elasticsearch.index.Index;
 import org.elasticsearch.license.LicenseService;
 import org.elasticsearch.plugins.Plugin;
-import org.elasticsearch.xpack.core.XPackClient;
-import org.elasticsearch.xpack.core.XPackSettings;
-import org.elasticsearch.xpack.core.security.SecurityField;
+import org.elasticsearch.xpack.core.security.authc.support.Hasher;
 import org.elasticsearch.xpack.core.security.authc.support.UsernamePasswordToken;
-import org.elasticsearch.xpack.core.security.client.SecurityClient;
 import org.elasticsearch.xpack.security.LocalStateSecurity;
-
+import org.elasticsearch.xpack.security.support.SecurityIndexManager;
 import org.junit.AfterClass;
 import org.junit.Before;
 import org.junit.BeforeClass;
+import org.junit.ClassRule;
 import org.junit.Rule;
 import org.junit.rules.ExternalResource;
 
-import java.net.InetSocketAddress;
 import java.nio.file.Path;
 import java.util.Collection;
 import java.util.Collections;
@@ -62,8 +59,7 @@ import static org.elasticsearch.test.SecuritySettingsSourceField.TEST_PASSWORD_S
 import static org.elasticsearch.test.hamcrest.ElasticsearchAssertions.assertAcked;
 import static org.elasticsearch.test.hamcrest.ElasticsearchAssertions.assertNoTimeout;
 import static org.elasticsearch.xpack.core.security.authc.support.UsernamePasswordToken.basicAuthHeaderValue;
-import static org.elasticsearch.xpack.security.SecurityLifecycleService.SECURITY_INDEX_NAME;
-import static org.elasticsearch.xpack.security.SecurityLifecycleService.securityIndexMappingSufficientToRead;
+import static org.elasticsearch.xpack.core.security.index.RestrictedIndicesNames.SECURITY_MAIN_ALIAS;
 import static org.hamcrest.Matchers.is;
 import static org.hamcrest.core.IsCollectionContaining.hasItem;
 
@@ -82,10 +78,9 @@ public abstract class SecurityIntegTestCase extends ESIntegTestCase {
      * Settings used when the {@link org.elasticsearch.test.ESIntegTestCase.ClusterScope} is set to
      * {@link org.elasticsearch.test.ESIntegTestCase.Scope#SUITE} or {@link org.elasticsearch.test.ESIntegTestCase.Scope#TEST}
      * so that some of the configuration parameters can be overridden through test instance methods, similarly
-     * to how {@link #nodeSettings(int)} and {@link #transportClientSettings()} work.
+     * to how {@link #nodeSettings(int)} works.
      */
     private static CustomSecuritySettingsSource customSecuritySettingsSource = null;
-
 
     @BeforeClass
     public static void generateBootstrapPassword() {
@@ -149,7 +144,7 @@ public abstract class SecurityIntegTestCase extends ESIntegTestCase {
     public static void initDefaultSettings() {
         if (SECURITY_DEFAULT_SETTINGS == null) {
             SECURITY_DEFAULT_SETTINGS =
-                    new SecuritySettingsSource(defaultMaxNumberOfNodes(), randomBoolean(), createTempDir(), Scope.SUITE);
+                    new SecuritySettingsSource(randomBoolean(), createTempDir(), Scope.SUITE);
         }
     }
 
@@ -162,24 +157,6 @@ public abstract class SecurityIntegTestCase extends ESIntegTestCase {
     public static void destroyDefaultSettings() {
         SECURITY_DEFAULT_SETTINGS = null;
         customSecuritySettingsSource = null;
-        // Wait for the network threads to finish otherwise there is the possibility that one of
-        // the threads lingers and trips the thread leak detector
-        try {
-            GlobalEventExecutor.INSTANCE.awaitInactivity(5, TimeUnit.SECONDS);
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-        } catch (IllegalStateException e) {
-            if (e.getMessage().equals("thread was not started") == false) {
-                throw e;
-            }
-            // ignore since the thread was never started
-        }
-
-        try {
-            ThreadDeathWatcher.awaitInactivity(5, TimeUnit.SECONDS);
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-        }
     }
 
     @Rule
@@ -199,6 +176,35 @@ public abstract class SecurityIntegTestCase extends ESIntegTestCase {
                     customSecuritySettingsSource =
                             new CustomSecuritySettingsSource(transportSSLEnabled(), createTempDir(), currentClusterScope);
                     break;
+            }
+        }
+    };
+
+    /**
+     * A JUnit class level rule that runs after the AfterClass method in {@link ESIntegTestCase},
+     * which stops the cluster. After the cluster is stopped, there are a few netty threads that
+     * can linger, so we wait for them to finish otherwise these lingering threads can intermittently
+     * trigger the thread leak detector
+     */
+    @ClassRule
+    public static final ExternalResource STOP_NETTY_RESOURCE = new ExternalResource() {
+        @Override
+        protected void after() {
+            try {
+                GlobalEventExecutor.INSTANCE.awaitInactivity(5, TimeUnit.SECONDS);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            } catch (IllegalStateException e) {
+                if (e.getMessage().equals("thread was not started") == false) {
+                    throw e;
+                }
+                // ignore since the thread was never started
+            }
+
+            try {
+                ThreadDeathWatcher.awaitInactivity(5, TimeUnit.SECONDS);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
             }
         }
     };
@@ -247,13 +253,6 @@ public abstract class SecurityIntegTestCase extends ESIntegTestCase {
     }
 
     @Override
-    protected Settings transportClientSettings() {
-        return Settings.builder().put(super.transportClientSettings())
-                .put(customSecuritySettingsSource.transportClientSettings())
-                .build();
-    }
-
-    @Override
     protected boolean addMockTransportService() {
         return false; // security has its own transport service
     }
@@ -261,19 +260,6 @@ public abstract class SecurityIntegTestCase extends ESIntegTestCase {
     @Override
     protected Collection<Class<? extends Plugin>> nodePlugins() {
         return customSecuritySettingsSource.nodePlugins();
-    }
-
-    @Override
-    protected Collection<Class<? extends Plugin>> transportClientPlugins() {
-        return customSecuritySettingsSource.transportClientPlugins();
-    }
-
-    @Override
-    protected Settings externalClusterClientSettings() {
-        return Settings.builder()
-                .put(SecurityField.USER_SETTING.getKey(), SecuritySettingsSource.TEST_USER_NAME + ":"
-                        + SecuritySettingsSourceField.TEST_PASSWORD)
-                .build();
     }
 
     /**
@@ -319,24 +305,6 @@ public abstract class SecurityIntegTestCase extends ESIntegTestCase {
     }
 
     /**
-     * Allows to override the transport client username (used while sending requests to the test cluster) when the
-     * {@link org.elasticsearch.test.ESIntegTestCase.ClusterScope} is set to
-     * {@link org.elasticsearch.test.ESIntegTestCase.Scope#SUITE} or {@link org.elasticsearch.test.ESIntegTestCase.Scope#TEST}
-     */
-    protected String transportClientUsername() {
-        return SECURITY_DEFAULT_SETTINGS.transportClientUsername();
-    }
-
-    /**
-     * Allows to override the transport client password (used while sending requests to the test cluster) when the
-     * {@link org.elasticsearch.test.ESIntegTestCase.ClusterScope} is set to
-     * {@link org.elasticsearch.test.ESIntegTestCase.Scope#SUITE} or {@link org.elasticsearch.test.ESIntegTestCase.Scope#TEST}
-     */
-    protected SecureString transportClientPassword() {
-        return SECURITY_DEFAULT_SETTINGS.transportClientPassword();
-    }
-
-    /**
      * Allows to control whether ssl key information is auto generated or not on the transport layer
      */
     protected boolean transportSSLEnabled() {
@@ -350,7 +318,7 @@ public abstract class SecurityIntegTestCase extends ESIntegTestCase {
     private class CustomSecuritySettingsSource extends SecuritySettingsSource {
 
         private CustomSecuritySettingsSource(boolean sslEnabled, Path configDir, Scope scope) {
-            super(maxNumberOfNodes(), sslEnabled, configDir, scope);
+            super(sslEnabled, configDir, scope);
         }
 
         @Override
@@ -377,16 +345,6 @@ public abstract class SecurityIntegTestCase extends ESIntegTestCase {
         protected SecureString nodeClientPassword() {
             return SecurityIntegTestCase.this.nodeClientPassword();
         }
-
-        @Override
-        protected String transportClientUsername() {
-            return SecurityIntegTestCase.this.transportClientUsername();
-        }
-
-        @Override
-        protected SecureString transportClientPassword() {
-            return SecurityIntegTestCase.this.transportClientPassword();
-        }
     }
 
     protected static void assertGreenClusterState(Client client) {
@@ -403,14 +361,18 @@ public abstract class SecurityIntegTestCase extends ESIntegTestCase {
         createIndex(indices);
 
         if (frequently()) {
+            boolean aliasAdded = false;
             IndicesAliasesRequestBuilder builder = client().admin().indices().prepareAliases();
             for (String index : indices) {
                 if (frequently()) {
                     //one alias per index with prefix "alias-"
                     builder.addAlias(index, "alias-" + index);
+                    aliasAdded = true;
                 }
             }
-            if (randomBoolean()) {
+            // If we get to this point and we haven't added an alias to the request we need to add one
+            // or the request will fail so use noAliasAdded to force adding the alias in this case
+            if (aliasAdded == false || randomBoolean()) {
                 //one alias pointing to all indices
                 for (String index : indices) {
                     builder.addAlias(index, "alias");
@@ -420,7 +382,7 @@ public abstract class SecurityIntegTestCase extends ESIntegTestCase {
         }
 
         for (String index : indices) {
-            client().prepareIndex(index, "type").setSource("field", "value").get();
+            client().prepareIndex(index).setSource("field", "value").get();
         }
         refresh(indices);
     }
@@ -432,30 +394,8 @@ public abstract class SecurityIntegTestCase extends ESIntegTestCase {
         // we need to wrap node clients because we do not specify a user for nodes and all requests will use the system
         // user. This is ok for internal n2n stuff but the test framework does other things like wiping indices, repositories, etc
         // that the system user cannot do. so we wrap the node client with a user that can do these things since the client() calls
-        // are randomized to return both node clients and transport clients
-        // transport clients do not need to be wrapped since we specify the xpack.security.user setting that sets the default user to be
-        // used for the transport client. If we did not set a default user then the transport client would not even be allowed
-        // to connect
+        // return a node client
         return client -> (client instanceof NodeClient) ? client.filterWithHeader(headers) : client;
-    }
-
-    protected SecurityClient securityClient() {
-        return securityClient(client());
-    }
-
-    public static SecurityClient securityClient(Client client) {
-        return randomBoolean() ? new XPackClient(client).security() : new SecurityClient(client);
-    }
-
-    protected String getHttpURL() {
-        final NodesInfoResponse nodeInfos = client().admin().cluster().prepareNodesInfo().get();
-        final List<NodeInfo> nodes = nodeInfos.getNodes();
-        assertTrue("there is at least one node", nodes.size() > 0);
-        NodeInfo ni = randomFrom(nodes);
-        boolean useSSL = XPackSettings.HTTP_SSL_ENABLED.get(ni.getSettings());
-        TransportAddress publishAddress = ni.getHttp().address().publishAddress();
-        InetSocketAddress address = publishAddress.address();
-        return (useSSL ? "https://" : "http://") + NetworkAddress.format(address.getAddress()) + ":" + address.getPort();
     }
 
     public void assertSecurityIndexActive() throws Exception {
@@ -470,8 +410,9 @@ public abstract class SecurityIntegTestCase extends ESIntegTestCase {
                 XContentBuilder builder = JsonXContent.contentBuilder().prettyPrint().startObject();
                 assertTrue("security index mapping not sufficient to read:\n" +
                                 Strings.toString(clusterState.toXContent(builder, ToXContent.EMPTY_PARAMS).endObject()),
-                        securityIndexMappingSufficientToRead(clusterState, logger));
-                Index securityIndex = resolveSecurityIndex(clusterState.metaData());
+                    SecurityIndexManager.checkIndexMappingVersionMatches(SECURITY_MAIN_ALIAS, clusterState, logger,
+                        Version.CURRENT.minimumIndexCompatibilityVersion()::onOrBefore));
+                Index securityIndex = resolveSecurityIndex(clusterState.metadata());
                 if (securityIndex != null) {
                     IndexRoutingTable indexRoutingTable = clusterState.routingTable().index(securityIndex);
                     if (indexRoutingTable != null) {
@@ -487,7 +428,7 @@ public abstract class SecurityIntegTestCase extends ESIntegTestCase {
                 UsernamePasswordToken.basicAuthHeaderValue(SecuritySettingsSource.TEST_SUPERUSER,
                         SecuritySettingsSourceField.TEST_PASSWORD_SECURE_STRING)));
         GetIndexRequest getIndexRequest = new GetIndexRequest();
-        getIndexRequest.indices(SECURITY_INDEX_NAME);
+        getIndexRequest.indices(SECURITY_MAIN_ALIAS);
         getIndexRequest.indicesOptions(IndicesOptions.lenientExpandOpen());
         GetIndexResponse getIndexResponse = client.admin().indices().getIndex(getIndexRequest).actionGet();
         if (getIndexResponse.getIndices().length > 0) {
@@ -497,15 +438,25 @@ public abstract class SecurityIntegTestCase extends ESIntegTestCase {
         }
     }
 
-    private static Index resolveSecurityIndex(MetaData metaData) {
-        final AliasOrIndex aliasOrIndex = metaData.getAliasAndIndexLookup().get(SECURITY_INDEX_NAME);
-        if (aliasOrIndex != null) {
-            return aliasOrIndex.getIndices().get(0).getIndex();
+    private static Index resolveSecurityIndex(Metadata metadata) {
+        final IndexAbstraction indexAbstraction = metadata.getIndicesLookup().get(SECURITY_MAIN_ALIAS);
+        if (indexAbstraction != null) {
+            return indexAbstraction.getIndices().get(0).getIndex();
         }
         return null;
     }
 
     protected boolean isTransportSSLEnabled() {
         return customSecuritySettingsSource.isSslEnabled();
+    }
+
+    protected static Hasher getFastStoredHashAlgoForTests() {
+        return Hasher.resolve(randomFrom("pbkdf2", "pbkdf2_1000", "bcrypt", "bcrypt9"));
+    }
+
+    protected class TestRestHighLevelClient extends RestHighLevelClient {
+        public TestRestHighLevelClient() {
+            super(getRestClient(), client -> {}, List.of());
+        }
     }
 }

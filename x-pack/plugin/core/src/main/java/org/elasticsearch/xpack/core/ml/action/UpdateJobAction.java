@@ -5,13 +5,12 @@
  */
 package org.elasticsearch.xpack.core.ml.action;
 
-import org.elasticsearch.Version;
-import org.elasticsearch.action.Action;
 import org.elasticsearch.action.ActionRequestValidationException;
+import org.elasticsearch.action.ActionType;
 import org.elasticsearch.action.support.master.AcknowledgedRequest;
 import org.elasticsearch.action.support.master.MasterNodeOperationRequestBuilder;
 import org.elasticsearch.client.ElasticsearchClient;
-import org.elasticsearch.cluster.metadata.MetaData;
+import org.elasticsearch.cluster.metadata.Metadata;
 import org.elasticsearch.common.Strings;
 import org.elasticsearch.common.io.stream.StreamInput;
 import org.elasticsearch.common.io.stream.StreamOutput;
@@ -24,28 +23,18 @@ import org.elasticsearch.xpack.core.ml.utils.ExceptionsHelper;
 import java.io.IOException;
 import java.util.Objects;
 
-public class UpdateJobAction extends Action<UpdateJobAction.Request, PutJobAction.Response, UpdateJobAction.RequestBuilder> {
+public class UpdateJobAction extends ActionType<PutJobAction.Response> {
     public static final UpdateJobAction INSTANCE = new UpdateJobAction();
     public static final String NAME = "cluster:admin/xpack/ml/job/update";
 
     private UpdateJobAction() {
-        super(NAME);
-    }
-
-    @Override
-    public UpdateJobAction.RequestBuilder newRequestBuilder(ElasticsearchClient client) {
-        return new UpdateJobAction.RequestBuilder(client, this);
-    }
-
-    @Override
-    public PutJobAction.Response newResponse() {
-        return new PutJobAction.Response();
+        super(NAME, PutJobAction.Response::new);
     }
 
     public static class Request extends AcknowledgedRequest<UpdateJobAction.Request> implements ToXContentObject {
 
         public static UpdateJobAction.Request parseRequest(String jobId, XContentParser parser) {
-            JobUpdate update = JobUpdate.PARSER.apply(parser, null).setJobId(jobId).build();
+            JobUpdate update = JobUpdate.EXTERNAL_PARSER.apply(parser, null).setJobId(jobId).build();
             return new UpdateJobAction.Request(jobId, update);
         }
 
@@ -54,7 +43,6 @@ public class UpdateJobAction extends Action<UpdateJobAction.Request, PutJobActio
 
         /** Indicates an update that was not triggered by a user */
         private boolean isInternal;
-        private boolean waitForAck = true;
 
         public Request(String jobId, JobUpdate update) {
             this(jobId, update, false);
@@ -64,12 +52,19 @@ public class UpdateJobAction extends Action<UpdateJobAction.Request, PutJobActio
             this.jobId = jobId;
             this.update = update;
             this.isInternal = isInternal;
-            if (MetaData.ALL.equals(jobId)) {
+            if (Metadata.ALL.equals(jobId)) {
                 throw ExceptionsHelper.badRequestException("Cannot update more than 1 job at a time");
             }
         }
 
         public Request() {
+        }
+
+        public Request(StreamInput in) throws IOException {
+            super(in);
+            jobId = in.readString();
+            update = new JobUpdate(in);
+            isInternal = in.readBoolean();
         }
 
         public static Request internal(String jobId, JobUpdate update) {
@@ -88,34 +83,9 @@ public class UpdateJobAction extends Action<UpdateJobAction.Request, PutJobActio
             return isInternal;
         }
 
-        public boolean isWaitForAck() {
-            return waitForAck;
-        }
-
-        public void setWaitForAck(boolean waitForAck) {
-            this.waitForAck = waitForAck;
-        }
-
         @Override
         public ActionRequestValidationException validate() {
             return null;
-        }
-
-        @Override
-        public void readFrom(StreamInput in) throws IOException {
-            super.readFrom(in);
-            jobId = in.readString();
-            update = new JobUpdate(in);
-            if (in.getVersion().onOrAfter(Version.V_6_2_2)) {
-                isInternal = in.readBoolean();
-            } else {
-                isInternal = false;
-            }
-            if (in.getVersion().onOrAfter(Version.V_6_3_0)) {
-                waitForAck = in.readBoolean();
-            } else {
-                waitForAck = true;
-            }
         }
 
         @Override
@@ -123,12 +93,7 @@ public class UpdateJobAction extends Action<UpdateJobAction.Request, PutJobActio
             super.writeTo(out);
             out.writeString(jobId);
             update.writeTo(out);
-            if (out.getVersion().onOrAfter(Version.V_6_2_2)) {
-                out.writeBoolean(isInternal);
-            }
-            if (out.getVersion().onOrAfter(Version.V_6_3_0)) {
-                out.writeBoolean(waitForAck);
-            }
+            out.writeBoolean(isInternal);
         }
 
         @Override

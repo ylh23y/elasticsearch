@@ -5,15 +5,18 @@
  */
 package org.elasticsearch.xpack.ml.datafeed.extractor.aggregation;
 
+import org.elasticsearch.common.geo.GeoPoint;
 import org.elasticsearch.search.aggregations.Aggregation;
 import org.elasticsearch.search.aggregations.Aggregations;
+import org.elasticsearch.search.aggregations.bucket.SingleBucketAggregation;
 import org.elasticsearch.search.aggregations.bucket.histogram.Histogram;
 import org.elasticsearch.search.aggregations.bucket.terms.StringTerms;
 import org.elasticsearch.search.aggregations.bucket.terms.Terms;
+import org.elasticsearch.search.aggregations.metrics.GeoCentroid;
 import org.elasticsearch.search.aggregations.metrics.NumericMetricsAggregation;
-import org.elasticsearch.search.aggregations.metrics.max.Max;
-import org.elasticsearch.search.aggregations.metrics.percentiles.Percentile;
-import org.elasticsearch.search.aggregations.metrics.percentiles.Percentiles;
+import org.elasticsearch.search.aggregations.metrics.Max;
+import org.elasticsearch.search.aggregations.metrics.Percentile;
+import org.elasticsearch.search.aggregations.metrics.Percentiles;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -37,6 +40,14 @@ public final class AggregationTestUtils {
         return bucket;
     }
 
+    static SingleBucketAggregation createSingleBucketAgg(String name, long docCount, List<Aggregation> subAggregations) {
+        SingleBucketAggregation singleBucketAggregation = mock(SingleBucketAggregation.class);
+        when(singleBucketAggregation.getName()).thenReturn(name);
+        when(singleBucketAggregation.getDocCount()).thenReturn(docCount);
+        when(singleBucketAggregation.getAggregations()).thenReturn(createAggs(subAggregations));
+        return singleBucketAggregation;
+    }
+
     static Histogram.Bucket createHistogramBucket(long timestamp, long docCount) {
         return createHistogramBucket(timestamp, docCount, Collections.emptyList());
     }
@@ -46,7 +57,7 @@ public final class AggregationTestUtils {
     }
 
     @SuppressWarnings("unchecked")
-    static Histogram createHistogramAggregation(String name, List histogramBuckets) {
+    static Histogram createHistogramAggregation(String name, List<Histogram.Bucket> histogramBuckets) {
         Histogram histogram = mock(Histogram.class);
         when((List<Histogram.Bucket>)histogram.getBuckets()).thenReturn(histogramBuckets);
         when(histogram.getName()).thenReturn(name);
@@ -61,6 +72,15 @@ public final class AggregationTestUtils {
         return max;
     }
 
+    static GeoCentroid createGeoCentroid(String name, long count, double lat, double lon) {
+        GeoCentroid centroid = mock(GeoCentroid.class);
+        when(centroid.count()).thenReturn(count);
+        when(centroid.getName()).thenReturn(name);
+        GeoPoint point = count > 0 ? new GeoPoint(lat, lon) : null;
+        when(centroid.centroid()).thenReturn(point);
+        return centroid;
+    }
+
     static NumericMetricsAggregation.SingleValue createSingleValue(String name, double value) {
         NumericMetricsAggregation.SingleValue singleValue = mock(NumericMetricsAggregation.SingleValue.class);
         when(singleValue.getName()).thenReturn(name);
@@ -72,7 +92,7 @@ public final class AggregationTestUtils {
     static Terms createTerms(String name, Term... terms) {
         Terms termsAgg = mock(Terms.class);
         when(termsAgg.getName()).thenReturn(name);
-        List buckets = new ArrayList<>();
+        List<Terms.Bucket> buckets = new ArrayList<>();
         for (Term term: terms) {
             StringTerms.Bucket bucket = mock(StringTerms.Bucket.class);
             when(bucket.getKey()).thenReturn(term.key);

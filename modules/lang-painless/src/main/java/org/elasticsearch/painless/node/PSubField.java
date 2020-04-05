@@ -19,100 +19,54 @@
 
 package org.elasticsearch.painless.node;
 
-import org.elasticsearch.painless.Definition;
-import org.elasticsearch.painless.Definition.Field;
-import org.elasticsearch.painless.Globals;
-import org.elasticsearch.painless.Locals;
 import org.elasticsearch.painless.Location;
-import org.elasticsearch.painless.MethodWriter;
+import org.elasticsearch.painless.Scope;
+import org.elasticsearch.painless.ir.ClassNode;
+import org.elasticsearch.painless.ir.DotSubNode;
+import org.elasticsearch.painless.lookup.PainlessField;
+import org.elasticsearch.painless.lookup.PainlessLookupUtility;
+import org.elasticsearch.painless.symbol.ScriptRoot;
 
 import java.lang.reflect.Modifier;
 import java.util.Objects;
-import java.util.Set;
 
 /**
  * Represents a field load/store.
  */
-final class PSubField extends AStoreable {
+public class PSubField extends AStoreable {
 
-    private final Field field;
+    protected final PainlessField field;
 
-    PSubField(Location location, Field field) {
+    PSubField(Location location, PainlessField field) {
         super(location);
 
         this.field = Objects.requireNonNull(field);
     }
 
     @Override
-    void extractVariables(Set<String> variables) {
-        throw createError(new IllegalStateException("Illegal tree structure."));
-    }
+    Output analyze(ClassNode classNode, ScriptRoot scriptRoot, Scope scope, AStoreable.Input input) {
+        Output output = new Output();
 
-    @Override
-    void analyze(Locals locals) {
-         if (write && Modifier.isFinal(field.modifiers)) {
-             throw createError(new IllegalArgumentException(
-                 "Cannot write to read-only field [" + field.name + "] for type [" + Definition.ClassToName(field.clazz) + "]."));
+         if (input.write && Modifier.isFinal(field.javaField.getModifiers())) {
+             throw createError(new IllegalArgumentException("Cannot write to read-only field [" + field.javaField.getName() + "] " +
+                     "for type [" + PainlessLookupUtility.typeToCanonicalTypeName(field.javaField.getDeclaringClass()) + "]."));
          }
 
-        actual = field.clazz;
-    }
+         output.actual = field.typeParameter;
 
-    @Override
-    void write(MethodWriter writer, Globals globals) {
-        writer.writeDebugInfo(location);
+        DotSubNode dotSubNode = new DotSubNode();
 
-        if (java.lang.reflect.Modifier.isStatic(field.modifiers)) {
-            writer.getStatic(field.owner.type, field.javaName, MethodWriter.getType(field.clazz));
-        } else {
-            writer.getField(field.owner.type, field.javaName, MethodWriter.getType(field.clazz));
-        }
-    }
+        dotSubNode.setLocation(location);
+        dotSubNode.setExpressionType(output.actual);
+        dotSubNode.setField(field);
 
-    @Override
-    int accessElementCount() {
-        return 1;
+        output.expressionNode = dotSubNode;
+
+        return output;
     }
 
     @Override
     boolean isDefOptimized() {
         return false;
-    }
-
-    @Override
-    void updateActual(Class<?> actual) {
-        throw new IllegalArgumentException("Illegal tree structure.");
-    }
-
-    @Override
-    void setup(MethodWriter writer, Globals globals) {
-        // Do nothing.
-    }
-
-    @Override
-    void load(MethodWriter writer, Globals globals) {
-        writer.writeDebugInfo(location);
-
-        if (java.lang.reflect.Modifier.isStatic(field.modifiers)) {
-            writer.getStatic(field.owner.type, field.javaName, MethodWriter.getType(field.clazz));
-        } else {
-            writer.getField(field.owner.type, field.javaName, MethodWriter.getType(field.clazz));
-        }
-    }
-
-    @Override
-    void store(MethodWriter writer, Globals globals) {
-        writer.writeDebugInfo(location);
-
-        if (java.lang.reflect.Modifier.isStatic(field.modifiers)) {
-            writer.putStatic(field.owner.type, field.javaName, MethodWriter.getType(field.clazz));
-        } else {
-            writer.putField(field.owner.type, field.javaName, MethodWriter.getType(field.clazz));
-        }
-    }
-
-    @Override
-    public String toString() {
-        return singleLineToString(prefix, field.name);
     }
 }

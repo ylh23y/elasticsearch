@@ -7,6 +7,10 @@ package org.elasticsearch.xpack.watcher.notification.email;
 
 import org.apache.logging.log4j.Logger;
 import org.elasticsearch.SpecialPermission;
+import org.elasticsearch.common.Nullable;
+import org.elasticsearch.common.settings.SecureSetting;
+import org.elasticsearch.common.settings.SecureString;
+import org.elasticsearch.common.settings.Setting;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.common.settings.SettingsException;
 import org.elasticsearch.common.unit.TimeValue;
@@ -19,15 +23,19 @@ import javax.mail.Session;
 import javax.mail.Transport;
 import javax.mail.internet.InternetAddress;
 import javax.mail.internet.MimeMessage;
+import javax.net.SocketFactory;
+import javax.net.ssl.SSLSocketFactory;
 import java.security.AccessController;
 import java.security.PrivilegedAction;
 import java.security.PrivilegedActionException;
 import java.security.PrivilegedExceptionAction;
 import java.util.Properties;
+import java.util.Set;
 
 public class Account {
 
     static final String SMTP_PROTOCOL = "smtp";
+    public static final Setting<SecureString> SECURE_PASSWORD_SETTING = SecureSetting.secureString("secure_password", null);
 
     static {
         SecurityManager sm = System.getSecurityManager();
@@ -101,7 +109,7 @@ public class Account {
         if (auth != null && auth.password() != null) {
             password = new String(auth.password().text(cryptoService));
         } else if (config.smtp.password != null) {
-            password = new String(config.smtp.password);
+            password = new String(config.smtp.password.getChars());
         }
 
         if (profile == null) {
@@ -179,7 +187,7 @@ public class Account {
         final Smtp smtp;
         final EmailDefaults defaults;
 
-        Config(String name, Settings settings) {
+        Config(String name, Settings settings, @Nullable SSLSocketFactory sslSocketFactory) {
             this.name = name;
             profile = Profile.resolve(settings.get("profile"), Profile.STANDARD);
             defaults = new EmailDefaults(name, settings.getAsSettings("email_defaults"));
@@ -187,6 +195,9 @@ public class Account {
             if (smtp.host == null) {
                 String msg = "missing required email account setting for account [" + name + "]. 'smtp.host' must be configured";
                 throw new SettingsException(msg);
+            }
+            if (sslSocketFactory != null) {
+                smtp.setSocketFactory(sslSocketFactory);
             }
         }
 
@@ -199,16 +210,33 @@ public class Account {
             final String host;
             final int port;
             final String user;
-            final char[] password;
+            final SecureString password;
             final Properties properties;
 
             Smtp(Settings settings) {
                 host = settings.get("host", settings.get("localaddress", settings.get("local_address")));
+
                 port = settings.getAsInt("port", settings.getAsInt("localport", settings.getAsInt("local_port", 25)));
                 user = settings.get("user", settings.get("from", null));
-                String passStr = settings.get("password", null);
-                password = passStr != null ? passStr.toCharArray() : null;
+                password = getSecureSetting(settings, SECURE_PASSWORD_SETTING);
+                //password = passStr != null ? passStr.toCharArray() : null;
                 properties = loadSmtpProperties(settings);
+            }
+
+            /**
+             * Finds a setting, and then a secure setting if the setting is null, or returns null if one does not exist. This differs
+             * from other getSetting calls in that it allows for null whereas the other methods throw an exception.
+             * <p>
+             * Note: if your setting was not previously secure, than the string reference that is in the setting object is still
+             * insecure. This is only constructing a new SecureString with the char[] of the insecure setting.
+             */
+            private static SecureString getSecureSetting(Settings settings, Setting<SecureString> secureSetting) {
+                SecureString secureString = secureSetting.get(settings);
+                if (secureString != null && secureString.length() > 0) {
+                    return secureString;
+                } else {
+                    return null;
+                }
             }
 
             /**
@@ -231,7 +259,9 @@ public class Account {
 
                 settings = builder.build();
                 Properties props = new Properties();
-                for (String key : settings.keySet()) {
+                // Secure strings can not be retreived out of a settings object and should be handled differently
+                Set<String> insecureSettings = settings.filter(s -> s.startsWith("secure_") == false).keySet();
+                for (String key : insecureSettings) {
                     props.setProperty(SMTP_SETTINGS_PREFIX + key, settings.get(key));
                 }
                 return props;
@@ -249,6 +279,10 @@ public class Account {
                 if (value != null) {
                     settings.put(newKey, TimeValue.parseTimeValue(value, currentKey).millis());
                 }
+            }
+
+            public void setSocketFactory(SocketFactory socketFactory) {
+                this.properties.put("mail.smtp.ssl.socketFactory", socketFactory);
             }
         }
 

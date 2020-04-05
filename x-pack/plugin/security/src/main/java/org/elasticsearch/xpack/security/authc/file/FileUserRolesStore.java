@@ -5,12 +5,14 @@
  */
 package org.elasticsearch.xpack.security.authc.file;
 
+import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.apache.logging.log4j.message.ParameterizedMessage;
 import org.apache.logging.log4j.util.Supplier;
 import org.elasticsearch.ElasticsearchException;
 import org.elasticsearch.common.Nullable;
 import org.elasticsearch.common.Strings;
+import org.elasticsearch.common.util.Maps;
 import org.elasticsearch.env.Environment;
 import org.elasticsearch.watcher.FileChangesListener;
 import org.elasticsearch.watcher.FileWatcher;
@@ -39,10 +41,9 @@ import static java.util.Collections.unmodifiableMap;
 import static org.elasticsearch.common.Strings.collectionToCommaDelimitedString;
 
 public class FileUserRolesStore {
+    private static final Logger logger = LogManager.getLogger(FileUserRolesStore.class);
 
     private static final Pattern USERS_DELIM = Pattern.compile("\\s*,\\s*");
-
-    private final Logger logger;
 
     private final Path file;
     private final CopyOnWriteArrayList<Runnable> listeners;
@@ -53,7 +54,6 @@ public class FileUserRolesStore {
     }
 
     FileUserRolesStore(RealmConfig config, ResourceWatcherService watcherService, Runnable listener) {
-        logger = config.logger(FileUserRolesStore.class);
         file = resolveFile(config.env());
         userRoles = parseFileLenient(file, logger);
         listeners = new CopyOnWriteArrayList<>(Collections.singletonList(listener));
@@ -75,11 +75,8 @@ public class FileUserRolesStore {
     }
 
     public String[] roles(String username) {
-        if (userRoles == null) {
-            return Strings.EMPTY_ARRAY;
-        }
-        String[] roles = userRoles.get(username);
-        return roles == null ? Strings.EMPTY_ARRAY : userRoles.get(username);
+        final String[] roles = userRoles.get(username);
+        return roles == null ? Strings.EMPTY_ARRAY : roles;
     }
 
     public static Path resolveFile(Environment env) {
@@ -160,11 +157,7 @@ public class FileUserRolesStore {
             }
 
             for (String user : roleUsers) {
-                List<String> roles = userToRoles.get(user);
-                if (roles == null) {
-                    roles = new ArrayList<>();
-                    userToRoles.put(user, roles);
-                }
+                List<String> roles = userToRoles.computeIfAbsent(user, k -> new ArrayList<>());
                 roles.add(role);
             }
         }
@@ -185,11 +178,7 @@ public class FileUserRolesStore {
         HashMap<String, List<String>> roleToUsers = new HashMap<>();
         for (Map.Entry<String, String[]> entry : userToRoles.entrySet()) {
             for (String role : entry.getValue()) {
-                List<String> users = roleToUsers.get(role);
-                if (users == null) {
-                    users = new ArrayList<>();
-                    roleToUsers.put(role, users);
-                }
+                List<String> users = roleToUsers.computeIfAbsent(role, k -> new ArrayList<>());
                 users.add(entry.getKey());
             }
         }
@@ -218,9 +207,13 @@ public class FileUserRolesStore {
         @Override
         public void onFileChanged(Path file) {
             if (file.equals(FileUserRolesStore.this.file)) {
-                logger.info("users roles file [{}] changed. updating users roles...", file.toAbsolutePath());
+                final Map<String, String[]> previousUserRoles = userRoles;
                 userRoles = parseFileLenient(file, logger);
-                notifyRefresh();
+
+                if (Maps.deepEquals(previousUserRoles, userRoles) == false) {
+                    logger.info("users roles file [{}] changed. updating users roles...", file.toAbsolutePath());
+                    notifyRefresh();
+                }
             }
         }
     }

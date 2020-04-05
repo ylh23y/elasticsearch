@@ -5,8 +5,8 @@
  */
 package org.elasticsearch.upgrades;
 
+import org.elasticsearch.client.Request;
 import org.elasticsearch.client.Response;
-import org.elasticsearch.license.LicenseService;
 
 import java.util.Map;
 
@@ -22,16 +22,18 @@ public class BasicLicenseUpgradeIT extends AbstractUpgradeTestCase {
         assertBusy(this::checkNonExpiringBasicLicense);
     }
 
+    @SuppressWarnings("unchecked")
     private void checkBasicLicense() throws Exception {
-        Response licenseResponse = client().performRequest("GET", "/_xpack/license");
+        Response licenseResponse = client().performRequest(new Request("GET", "/_license"));
         Map<String, Object> licenseResponseMap = entityAsMap(licenseResponse);
         Map<String, Object> licenseMap = (Map<String, Object>) licenseResponseMap.get("license");
         assertEquals("basic", licenseMap.get("type"));
         assertEquals("active", licenseMap.get("status"));
     }
 
+    @SuppressWarnings("unchecked")
     private void checkNonExpiringBasicLicense() throws Exception {
-        Response licenseResponse = client().performRequest("GET", "/_xpack/license");
+        Response licenseResponse = client().performRequest(new Request("GET", "/_license"));
         Map<String, Object> licenseResponseMap = entityAsMap(licenseResponse);
         Map<String, Object> licenseMap = (Map<String, Object>) licenseResponseMap.get("license");
         assertEquals("basic", licenseMap.get("type"));

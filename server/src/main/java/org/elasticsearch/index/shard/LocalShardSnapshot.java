@@ -25,10 +25,9 @@ import org.apache.lucene.store.IOContext;
 import org.apache.lucene.store.IndexOutput;
 import org.apache.lucene.store.Lock;
 import org.apache.lucene.store.NoLockFactory;
-import org.elasticsearch.cluster.metadata.IndexMetaData;
+import org.elasticsearch.cluster.metadata.IndexMetadata;
 import org.elasticsearch.index.Index;
 import org.elasticsearch.index.engine.Engine;
-import org.elasticsearch.index.engine.InternalEngine;
 import org.elasticsearch.index.store.Store;
 
 import java.io.Closeable;
@@ -62,11 +61,11 @@ final class LocalShardSnapshot implements Closeable {
     }
 
     long maxSeqNo() {
-        return shard.getEngine().getLocalCheckpointTracker().getMaxSeqNo();
+        return shard.getEngine().getSeqNoStats(-1).getMaxSeqNo();
     }
 
     long maxUnsafeAutoIdTimestamp() {
-        return Long.parseLong(shard.getEngine().commitStats().getUserData().get(InternalEngine.MAX_UNSAFE_AUTO_ID_TIMESTAMP_COMMIT_ID));
+        return Long.parseLong(shard.getEngine().commitStats().getUserData().get(Engine.MAX_UNSAFE_AUTO_ID_TIMESTAMP_COMMIT_ID));
     }
 
     Directory getSnapshotDirectory() {
@@ -131,8 +130,8 @@ final class LocalShardSnapshot implements Closeable {
         }
     }
 
-    IndexMetaData getIndexMetaData() {
-        return shard.indexSettings.getIndexMetaData();
+    IndexMetadata getIndexMetadata() {
+        return shard.indexSettings.getIndexMetadata();
     }
 
     @Override

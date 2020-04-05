@@ -20,6 +20,7 @@ package org.elasticsearch.search.aggregations.bucket.range;
 
 import org.apache.lucene.index.LeafReaderContext;
 import org.apache.lucene.index.SortedSetDocValues;
+import org.apache.lucene.search.ScoreMode;
 import org.apache.lucene.util.BytesRef;
 import org.elasticsearch.index.fielddata.SortedBinaryDocValues;
 import org.elasticsearch.search.DocValueFormat;
@@ -80,8 +81,8 @@ public final class BinaryRangeAggregator extends BucketsAggregator {
             ValuesSource.Bytes valuesSource, DocValueFormat format,
             List<Range> ranges, boolean keyed, SearchContext context,
             Aggregator parent, List<PipelineAggregator> pipelineAggregators,
-            Map<String, Object> metaData) throws IOException {
-        super(name, factories, context, parent, pipelineAggregators, metaData);
+            Map<String, Object> metadata) throws IOException {
+        super(name, factories, context, parent, pipelineAggregators, metadata);
         this.valuesSource = valuesSource;
         this.format = format;
         this.keyed = keyed;
@@ -91,8 +92,11 @@ public final class BinaryRangeAggregator extends BucketsAggregator {
     }
 
     @Override
-    public boolean needsScores() {
-        return (valuesSource != null && valuesSource.needsScores()) || super.needsScores();
+    public ScoreMode scoreMode() {
+        if (valuesSource != null && valuesSource.needsScores()) {
+            return ScoreMode.COMPLETE;
+        }
+        return super.scoreMode();
     }
 
     @Override
@@ -333,11 +337,11 @@ public final class BinaryRangeAggregator extends BucketsAggregator {
                     ranges[i].key, ranges[i].from, ranges[i].to,
                     bucketDocCount(bucketOrd), bucketAggregations(bucketOrd)));
         }
-        return new InternalBinaryRange(name, format, keyed, buckets, pipelineAggregators(), metaData());
+        return new InternalBinaryRange(name, format, keyed, buckets, pipelineAggregators(), metadata());
     }
 
     @Override
     public InternalAggregation buildEmptyAggregation() {
-        return new InternalBinaryRange(name, format, keyed, emptyList(), pipelineAggregators(), metaData());
+        return new InternalBinaryRange(name, format, keyed, emptyList(), pipelineAggregators(), metadata());
     }
 }

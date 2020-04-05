@@ -18,7 +18,7 @@
  */
 package org.elasticsearch.gateway;
 
-import org.elasticsearch.cluster.metadata.IndexMetaData;
+import org.elasticsearch.cluster.metadata.IndexMetadata;
 import org.elasticsearch.cluster.routing.RoutingNodes;
 import org.elasticsearch.cluster.routing.ShardRouting;
 import org.elasticsearch.cluster.routing.ShardRoutingState;
@@ -54,11 +54,11 @@ public class PriorityComparatorTests extends ESTestCase {
             @Override
             protected Settings getIndexSettings(Index index) {
                 if ("oldest".equals(index.getName())) {
-                    return Settings.builder().put(IndexMetaData.SETTING_CREATION_DATE, 10)
-                            .put(IndexMetaData.SETTING_PRIORITY, 1).build();
+                    return Settings.builder().put(IndexMetadata.SETTING_CREATION_DATE, 10)
+                            .put(IndexMetadata.SETTING_PRIORITY, 1).build();
                 } else if ("newest".equals(index.getName())) {
-                    return Settings.builder().put(IndexMetaData.SETTING_CREATION_DATE, 100)
-                            .put(IndexMetaData.SETTING_PRIORITY, 1).build();
+                    return Settings.builder().put(IndexMetadata.SETTING_CREATION_DATE, 100)
+                            .put(IndexMetadata.SETTING_PRIORITY, 1).build();
                 }
                 return Settings.EMPTY;
             }
@@ -86,11 +86,11 @@ public class PriorityComparatorTests extends ESTestCase {
             @Override
             protected Settings getIndexSettings(Index index) {
                 if ("oldest".equals(index.getName())) {
-                    return Settings.builder().put(IndexMetaData.SETTING_CREATION_DATE, 10)
-                            .put(IndexMetaData.SETTING_PRIORITY, 100).build();
+                    return Settings.builder().put(IndexMetadata.SETTING_CREATION_DATE, 10)
+                            .put(IndexMetadata.SETTING_PRIORITY, 100).build();
                 } else if ("newest".equals(index.getName())) {
-                    return Settings.builder().put(IndexMetaData.SETTING_CREATION_DATE, 100)
-                            .put(IndexMetaData.SETTING_PRIORITY, 1).build();
+                    return Settings.builder().put(IndexMetadata.SETTING_CREATION_DATE, 100)
+                            .put(IndexMetadata.SETTING_PRIORITY, 1).build();
                 }
                 return Settings.EMPTY;
             }
@@ -111,7 +111,8 @@ public class PriorityComparatorTests extends ESTestCase {
 
         for (int i = 0; i < indices.length; i++) {
             if (frequently()) {
-                indices[i] = new IndexMeta("idx_2015_04_" + String.format(Locale.ROOT, "%02d", i), randomIntBetween(1, 1000), randomIntBetween(1, 10000));
+                indices[i] = new IndexMeta("idx_2015_04_" + String.format(Locale.ROOT, "%02d", i), randomIntBetween(1, 1000),
+                    randomIntBetween(1, 10000));
             } else { // sometimes just use defaults
                 indices[i] = new IndexMeta("idx_2015_04_" +  String.format(Locale.ROOT, "%02d", i));
             }
@@ -121,7 +122,8 @@ public class PriorityComparatorTests extends ESTestCase {
         for (int i = 0; i < numShards; i++) {
             IndexMeta indexMeta = randomFrom(indices);
             shards.add(TestShardRouting.newShardRouting(indexMeta.name, randomIntBetween(1, 5), null, null,
-                    randomBoolean(), ShardRoutingState.UNASSIGNED, new UnassignedInfo(randomFrom(UnassignedInfo.Reason.values()), "foobar")));
+                    randomBoolean(), ShardRoutingState.UNASSIGNED, new UnassignedInfo(randomFrom(UnassignedInfo.Reason.values()),
+                    "foobar")));
         }
         shards.sort(new PriorityComparator() {
             @Override
@@ -138,13 +140,16 @@ public class PriorityComparatorTests extends ESTestCase {
                 if (prevMeta.priority == currentMeta.priority) {
                     if (prevMeta.creationDate == currentMeta.creationDate) {
                         if (prevMeta.name.equals(currentMeta.name) == false) {
-                            assertTrue("indexName mismatch, expected:" + currentMeta.name + " after " + prevMeta.name + " " + prevMeta.name.compareTo(currentMeta.name), prevMeta.name.compareTo(currentMeta.name) > 0);
+                            assertTrue("indexName mismatch, expected:" + currentMeta.name + " after " + prevMeta.name + " " +
+                                prevMeta.name.compareTo(currentMeta.name), prevMeta.name.compareTo(currentMeta.name) > 0);
                         }
                     } else {
-                        assertTrue("creationDate mismatch, expected:" + currentMeta.creationDate + " after " + prevMeta.creationDate, prevMeta.creationDate > currentMeta.creationDate);
+                        assertTrue("creationDate mismatch, expected:" + currentMeta.creationDate + " after " + prevMeta.creationDate,
+                            prevMeta.creationDate > currentMeta.creationDate);
                     }
                 } else {
-                    assertTrue("priority mismatch, expected:" +  currentMeta.priority + " after " + prevMeta.priority, prevMeta.priority > currentMeta.priority);
+                    assertTrue("priority mismatch, expected:" +  currentMeta.priority + " after " + prevMeta.priority,
+                        prevMeta.priority > currentMeta.priority);
                 }
             }
             previous = routing;
@@ -168,8 +173,8 @@ public class PriorityComparatorTests extends ESTestCase {
             this.name = name;
             this.priority = priority;
             this.creationDate = creationDate;
-            this.settings = Settings.builder().put(IndexMetaData.SETTING_CREATION_DATE, creationDate)
-                    .put(IndexMetaData.SETTING_PRIORITY, priority).build();
+            this.settings = Settings.builder().put(IndexMetadata.SETTING_CREATION_DATE, creationDate)
+                    .put(IndexMetadata.SETTING_PRIORITY, priority).build();
         }
     }
 }

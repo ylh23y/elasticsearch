@@ -11,16 +11,14 @@ import org.elasticsearch.Version;
 import org.elasticsearch.action.ActionListener;
 import org.elasticsearch.cluster.ClusterState;
 import org.elasticsearch.cluster.ClusterStateUpdateTask;
-import org.elasticsearch.cluster.metadata.MetaData;
+import org.elasticsearch.cluster.metadata.Metadata;
 import org.elasticsearch.common.Nullable;
+import org.elasticsearch.xpack.core.XPackPlugin;
 
 import java.time.Clock;
 import java.util.Collections;
-import java.util.HashMap;
 import java.util.Map;
 import java.util.UUID;
-import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicReference;
 
 public class StartTrialClusterTask extends ClusterStateUpdateTask {
 
@@ -49,13 +47,13 @@ public class StartTrialClusterTask extends ClusterStateUpdateTask {
 
     @Override
     public void clusterStateProcessed(String source, ClusterState oldState, ClusterState newState) {
-        LicensesMetaData oldLicensesMetaData = oldState.metaData().custom(LicensesMetaData.TYPE);
-        logger.debug("started self generated trial license: {}", oldLicensesMetaData);
+        LicensesMetadata oldLicensesMetadata = oldState.metadata().custom(LicensesMetadata.TYPE);
+        logger.debug("started self generated trial license: {}", oldLicensesMetadata);
 
         if (request.isAcknowledged() == false) {
             listener.onResponse(new PostStartTrialResponse(PostStartTrialResponse.Status.NEED_ACKNOWLEDGEMENT,
                     ACK_MESSAGES, ACKNOWLEDGEMENT_HEADER));
-        } else if (oldLicensesMetaData == null || oldLicensesMetaData.isEligibleForTrial()) {
+        } else if (oldLicensesMetadata == null || oldLicensesMetadata.isEligibleForTrial()) {
             listener.onResponse(new PostStartTrialResponse(PostStartTrialResponse.Status.UPGRADED_TO_TRIAL));
         } else {
             listener.onResponse(new PostStartTrialResponse(PostStartTrialResponse.Status.TRIAL_ALREADY_ACTIVATED));
@@ -64,26 +62,31 @@ public class StartTrialClusterTask extends ClusterStateUpdateTask {
 
     @Override
     public ClusterState execute(ClusterState currentState) throws Exception {
-        LicensesMetaData currentLicensesMetaData = currentState.metaData().custom(LicensesMetaData.TYPE);
+        XPackPlugin.checkReadyForXPackCustomMetadata(currentState);
+        LicensesMetadata currentLicensesMetadata = currentState.metadata().custom(LicensesMetadata.TYPE);
 
         if (request.isAcknowledged() == false) {
             return currentState;
-        } else if (currentLicensesMetaData == null || currentLicensesMetaData.isEligibleForTrial()) {
+        } else if (currentLicensesMetadata == null || currentLicensesMetadata.isEligibleForTrial()) {
             long issueDate = clock.millis();
-            MetaData.Builder mdBuilder = MetaData.builder(currentState.metaData());
+            Metadata.Builder mdBuilder = Metadata.builder(currentState.metadata());
             long expiryDate = issueDate + LicenseService.NON_BASIC_SELF_GENERATED_LICENSE_DURATION.getMillis();
 
             License.Builder specBuilder = License.builder()
                     .uid(UUID.randomUUID().toString())
                     .issuedTo(clusterName)
-                    .maxNodes(LicenseService.SELF_GENERATED_LICENSE_MAX_NODES)
                     .issueDate(issueDate)
                     .type(request.getType())
                     .expiryDate(expiryDate);
-            License selfGeneratedLicense = SelfGeneratedLicense.create(specBuilder);
-            LicensesMetaData newLicensesMetaData = new LicensesMetaData(selfGeneratedLicense, Version.CURRENT);
-            mdBuilder.putCustom(LicensesMetaData.TYPE, newLicensesMetaData);
-            return ClusterState.builder(currentState).metaData(mdBuilder).build();
+            if (License.LicenseType.isEnterprise(request.getType())) {
+                specBuilder.maxResourceUnits(LicenseService.SELF_GENERATED_LICENSE_MAX_RESOURCE_UNITS);
+            } else {
+                specBuilder.maxNodes(LicenseService.SELF_GENERATED_LICENSE_MAX_NODES);
+            }
+            License selfGeneratedLicense = SelfGeneratedLicense.create(specBuilder, currentState.nodes());
+            LicensesMetadata newLicensesMetadata = new LicensesMetadata(selfGeneratedLicense, Version.CURRENT);
+            mdBuilder.putCustom(LicensesMetadata.TYPE, newLicensesMetadata);
+            return ClusterState.builder(currentState).metadata(mdBuilder).build();
         } else {
             return currentState;
         }

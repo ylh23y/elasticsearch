@@ -5,6 +5,7 @@
  */
 package org.elasticsearch.license;
 
+import org.elasticsearch.cluster.node.DiscoveryNodes;
 import org.elasticsearch.common.bytes.BytesReference;
 import org.elasticsearch.common.xcontent.LoggingDeprecationHandler;
 import org.elasticsearch.common.xcontent.NamedXContentRegistry;
@@ -19,15 +20,15 @@ import java.nio.ByteBuffer;
 import java.util.Base64;
 import java.util.Collections;
 
-import static org.elasticsearch.license.CryptUtils.encryptV3Format;
-import static org.elasticsearch.license.CryptUtils.encrypt;
-import static org.elasticsearch.license.CryptUtils.decryptV3Format;
 import static org.elasticsearch.license.CryptUtils.decrypt;
+import static org.elasticsearch.license.CryptUtils.decryptV3Format;
+import static org.elasticsearch.license.CryptUtils.encrypt;
+import static org.elasticsearch.license.CryptUtils.encryptV3Format;
 
 class SelfGeneratedLicense {
 
-    public static License create(License.Builder specBuilder) {
-        return create(specBuilder, License.VERSION_CURRENT);
+    public static License create(License.Builder specBuilder, DiscoveryNodes currentNodes) {
+        return create(specBuilder, LicenseUtils.compatibleLicenseVersion(currentNodes));
     }
 
     public static License create(License.Builder specBuilder, int version) {
@@ -82,7 +83,13 @@ class SelfGeneratedLicense {
         }
     }
 
-    public static boolean validSelfGeneratedType(String type) {
-        return "basic".equals(type) || "trial".equals(type);
+    static License.LicenseType validateSelfGeneratedType(License.LicenseType type) {
+        switch (type) {
+            case BASIC:
+            case TRIAL:
+                return type;
+        }
+        throw new IllegalArgumentException("invalid self generated license type [" + type + "], only " +
+            License.LicenseType.BASIC + " and " + License.LicenseType.TRIAL + " are accepted");
     }
 }

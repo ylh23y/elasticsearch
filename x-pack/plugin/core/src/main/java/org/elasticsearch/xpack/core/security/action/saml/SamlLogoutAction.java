@@ -5,28 +5,17 @@
  */
 package org.elasticsearch.xpack.core.security.action.saml;
 
-import org.elasticsearch.action.Action;
-import org.elasticsearch.client.ElasticsearchClient;
+import org.elasticsearch.action.ActionType;
 
 /**
- * Action for initiating a logout process for a SAML-SSO user
+ * ActionType for initiating a logout process for a SAML-SSO user
  */
-public final class SamlLogoutAction extends Action<SamlLogoutRequest, SamlLogoutResponse, SamlLogoutRequestBuilder> {
+public final class SamlLogoutAction extends ActionType<SamlLogoutResponse> {
 
     public static final String NAME = "cluster:admin/xpack/security/saml/logout";
     public static final SamlLogoutAction INSTANCE = new SamlLogoutAction();
 
     private SamlLogoutAction() {
-        super(NAME);
-    }
-
-    @Override
-    public SamlLogoutRequestBuilder newRequestBuilder(ElasticsearchClient client) {
-        return new SamlLogoutRequestBuilder(client);
-    }
-
-    @Override
-    public SamlLogoutResponse newResponse() {
-        return new SamlLogoutResponse();
+        super(NAME, SamlLogoutResponse::new);
     }
 }

@@ -28,7 +28,6 @@ import org.elasticsearch.search.aggregations.InternalAggregations;
 import org.elasticsearch.search.aggregations.bucket.significant.heuristics.SignificanceHeuristic;
 import org.elasticsearch.search.aggregations.bucket.terms.InternalTerms;
 import org.elasticsearch.search.aggregations.bucket.terms.UnmappedTerms;
-import org.elasticsearch.search.aggregations.pipeline.PipelineAggregator;
 
 import java.io.IOException;
 import java.util.Iterator;
@@ -51,14 +50,13 @@ public class UnmappedSignificantTerms extends InternalSignificantTerms<UnmappedS
      */
     protected abstract static class Bucket extends InternalSignificantTerms.Bucket<Bucket> {
         private Bucket(BytesRef term, long subsetDf, long subsetSize, long supersetDf, long supersetSize, InternalAggregations aggregations,
-                DocValueFormat format) {
+                       DocValueFormat format) {
             super(subsetDf, subsetSize, supersetDf, supersetSize, aggregations, format);
         }
     }
 
-    public UnmappedSignificantTerms(String name, int requiredSize, long minDocCount, List<PipelineAggregator> pipelineAggregators,
-            Map<String, Object> metaData) {
-        super(name, requiredSize, minDocCount, pipelineAggregators, metaData);
+    public UnmappedSignificantTerms(String name, int requiredSize, long minDocCount, Map<String, Object> metadata) {
+        super(name, requiredSize, minDocCount, metadata);
     }
 
     /**
@@ -85,7 +83,7 @@ public class UnmappedSignificantTerms extends InternalSignificantTerms<UnmappedS
 
     @Override
     public UnmappedSignificantTerms create(List<Bucket> buckets) {
-        return new UnmappedSignificantTerms(name, requiredSize, minDocCount, pipelineAggregators(), metaData);
+        return new UnmappedSignificantTerms(name, requiredSize, minDocCount, metadata);
     }
 
     @Override
@@ -99,13 +97,19 @@ public class UnmappedSignificantTerms extends InternalSignificantTerms<UnmappedS
     }
 
     @Override
-    public InternalAggregation doReduce(List<InternalAggregation> aggregations, ReduceContext reduceContext) {
-        for (InternalAggregation aggregation : aggregations) {
-            if (!(aggregation instanceof UnmappedSignificantTerms)) {
-                return aggregation.reduce(aggregations, reduceContext);
-            }
-        }
-        return this;
+    Bucket createBucket(long subsetDf, long subsetSize, long supersetDf, long supersetSize,
+                        InternalAggregations aggregations, Bucket prototype) {
+        throw new UnsupportedOperationException("not supported for UnmappedSignificantTerms");
+    }
+
+    @Override
+    public InternalAggregation reduce(List<InternalAggregation> aggregations, ReduceContext reduceContext) {
+        return new UnmappedSignificantTerms(name, requiredSize, minDocCount, metadata);
+    }
+
+    @Override
+    public boolean isMapped() {
+        return false;
     }
 
     @Override

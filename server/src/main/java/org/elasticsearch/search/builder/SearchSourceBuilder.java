@@ -19,8 +19,9 @@
 
 package org.elasticsearch.search.builder;
 
+import org.apache.logging.log4j.LogManager;
 import org.elasticsearch.ElasticsearchException;
-import org.elasticsearch.Version;
+import org.elasticsearch.common.Booleans;
 import org.elasticsearch.common.Nullable;
 import org.elasticsearch.common.ParseField;
 import org.elasticsearch.common.ParsingException;
@@ -29,7 +30,6 @@ import org.elasticsearch.common.io.stream.StreamInput;
 import org.elasticsearch.common.io.stream.StreamOutput;
 import org.elasticsearch.common.io.stream.Writeable;
 import org.elasticsearch.common.logging.DeprecationLogger;
-import org.elasticsearch.common.logging.Loggers;
 import org.elasticsearch.common.unit.TimeValue;
 import org.elasticsearch.common.xcontent.ToXContentFragment;
 import org.elasticsearch.common.xcontent.ToXContentObject;
@@ -47,6 +47,7 @@ import org.elasticsearch.search.aggregations.AggregatorFactories;
 import org.elasticsearch.search.aggregations.PipelineAggregationBuilder;
 import org.elasticsearch.search.collapse.CollapseBuilder;
 import org.elasticsearch.search.fetch.StoredFieldsContext;
+import org.elasticsearch.search.fetch.subphase.FetchDocValuesContext.FieldAndFormat;
 import org.elasticsearch.search.fetch.subphase.FetchSourceContext;
 import org.elasticsearch.search.fetch.subphase.highlight.HighlightBuilder;
 import org.elasticsearch.search.internal.SearchContext;
@@ -66,6 +67,8 @@ import java.util.List;
 import java.util.Objects;
 
 import static org.elasticsearch.index.query.AbstractQueryBuilder.parseInnerQueryBuilder;
+import static org.elasticsearch.search.internal.SearchContext.TRACK_TOTAL_HITS_ACCURATE;
+import static org.elasticsearch.search.internal.SearchContext.TRACK_TOTAL_HITS_DISABLED;
 
 /**
  * A search source builder allowing to easily build search source. Simple
@@ -75,8 +78,8 @@ import static org.elasticsearch.index.query.AbstractQueryBuilder.parseInnerQuery
  * @see org.elasticsearch.action.search.SearchRequest#source(SearchSourceBuilder)
  */
 public final class SearchSourceBuilder implements Writeable, ToXContentObject, Rewriteable<SearchSourceBuilder> {
-    private static final DeprecationLogger DEPRECATION_LOGGER =
-        new DeprecationLogger(Loggers.getLogger(SearchSourceBuilder.class));
+    private static final DeprecationLogger deprecationLogger =
+        new DeprecationLogger(LogManager.getLogger(SearchSourceBuilder.class));
 
     public static final ParseField FROM_FIELD = new ParseField("from");
     public static final ParseField SIZE_FIELD = new ParseField("size");
@@ -86,6 +89,7 @@ public final class SearchSourceBuilder implements Writeable, ToXContentObject, R
     public static final ParseField POST_FILTER_FIELD = new ParseField("post_filter");
     public static final ParseField MIN_SCORE_FIELD = new ParseField("min_score");
     public static final ParseField VERSION_FIELD = new ParseField("version");
+    public static final ParseField SEQ_NO_PRIMARY_TERM_FIELD = new ParseField("seq_no_primary_term");
     public static final ParseField EXPLAIN_FIELD = new ParseField("explain");
     public static final ParseField _SOURCE_FIELD = new ParseField("_source");
     public static final ParseField STORED_FIELDS_FIELD = new ParseField("stored_fields");
@@ -108,7 +112,6 @@ public final class SearchSourceBuilder implements Writeable, ToXContentObject, R
     public static final ParseField SEARCH_AFTER = new ParseField("search_after");
     public static final ParseField COLLAPSE = new ParseField("collapse");
     public static final ParseField SLICE = new ParseField("slice");
-    public static final ParseField ALL_FIELDS_FIELDS = new ParseField("all_fields");
 
     public static SearchSourceBuilder fromXContent(XContentParser parser) throws IOException {
         return fromXContent(parser, true);
@@ -146,11 +149,13 @@ public final class SearchSourceBuilder implements Writeable, ToXContentObject, R
 
     private Boolean version;
 
+    private Boolean seqNoAndPrimaryTerm;
+
     private List<SortBuilder<?>> sorts;
 
     private boolean trackScores = false;
 
-    private boolean trackTotalHits = true;
+    private Integer trackTotalHitsUpTo;
 
     private SearchAfterBuilder searchAfterBuilder;
 
@@ -162,7 +167,7 @@ public final class SearchSourceBuilder implements Writeable, ToXContentObject, R
     private int terminateAfter = SearchContext.DEFAULT_TERMINATE_AFTER;
 
     private StoredFieldsContext storedFieldsContext;
-    private List<String> docValueFields;
+    private List<FieldAndFormat> docValueFields;
     private List<ScriptField> scriptFields;
     private FetchSourceContext fetchSourceContext;
 
@@ -172,6 +177,7 @@ public final class SearchSourceBuilder implements Writeable, ToXContentObject, R
 
     private SuggestBuilder suggestBuilder;
 
+    @SuppressWarnings("rawtypes")
     private List<RescorerBuilder> rescoreBuilders;
 
     private List<IndexBoost> indexBoosts = new ArrayList<>();
@@ -197,7 +203,11 @@ public final class SearchSourceBuilder implements Writeable, ToXContentObject, R
         aggregations = in.readOptionalWriteable(AggregatorFactories.Builder::new);
         explain = in.readOptionalBoolean();
         fetchSourceContext = in.readOptionalWriteable(FetchSourceContext::new);
-        docValueFields = (List<String>) in.readGenericValue();
+        if (in.readBoolean()) {
+            docValueFields = in.readList(FieldAndFormat::new);
+        } else {
+            docValueFields = null;
+        }
         storedFieldsContext = in.readOptionalWriteable(StoredFieldsContext::new);
         from = in.readVInt();
         highlightBuilder = in.readOptionalWriteable(HighlightBuilder::new);
@@ -220,25 +230,20 @@ public final class SearchSourceBuilder implements Writeable, ToXContentObject, R
             }
         }
         if (in.readBoolean()) {
-            stats = in.readList(StreamInput::readString);
+            stats = in.readStringList();
         }
         suggestBuilder = in.readOptionalWriteable(SuggestBuilder::new);
         terminateAfter = in.readVInt();
         timeout = in.readOptionalTimeValue();
         trackScores = in.readBoolean();
         version = in.readOptionalBoolean();
+        seqNoAndPrimaryTerm = in.readOptionalBoolean();
         extBuilders = in.readNamedWriteableList(SearchExtBuilder.class);
         profile = in.readBoolean();
         searchAfterBuilder = in.readOptionalWriteable(SearchAfterBuilder::new);
         sliceBuilder = in.readOptionalWriteable(SliceBuilder::new);
-        if (in.getVersion().onOrAfter(Version.V_5_3_0)) {
-            collapse = in.readOptionalWriteable(CollapseBuilder::new);
-        }
-        if (in.getVersion().onOrAfter(Version.V_6_0_0_beta1)) {
-            trackTotalHits = in.readBoolean();
-        } else {
-            trackTotalHits = true;
-        }
+        collapse = in.readOptionalWriteable(CollapseBuilder::new);
+        trackTotalHitsUpTo = in.readOptionalInt();
     }
 
     @Override
@@ -246,7 +251,10 @@ public final class SearchSourceBuilder implements Writeable, ToXContentObject, R
         out.writeOptionalWriteable(aggregations);
         out.writeOptionalBoolean(explain);
         out.writeOptionalWriteable(fetchSourceContext);
-        out.writeGenericValue(docValueFields);
+        out.writeBoolean(docValueFields != null);
+        if (docValueFields != null) {
+            out.writeList(docValueFields);
+        }
         out.writeOptionalWriteable(storedFieldsContext);
         out.writeVInt(from);
         out.writeOptionalWriteable(highlightBuilder);
@@ -276,23 +284,20 @@ public final class SearchSourceBuilder implements Writeable, ToXContentObject, R
         boolean hasStats = stats != null;
         out.writeBoolean(hasStats);
         if (hasStats) {
-            out.writeStringList(stats);
+            out.writeStringCollection(stats);
         }
         out.writeOptionalWriteable(suggestBuilder);
         out.writeVInt(terminateAfter);
         out.writeOptionalTimeValue(timeout);
         out.writeBoolean(trackScores);
         out.writeOptionalBoolean(version);
+        out.writeOptionalBoolean(seqNoAndPrimaryTerm);
         out.writeNamedWriteableList(extBuilders);
         out.writeBoolean(profile);
         out.writeOptionalWriteable(searchAfterBuilder);
         out.writeOptionalWriteable(sliceBuilder);
-        if (out.getVersion().onOrAfter(Version.V_5_3_0)) {
-            out.writeOptionalWriteable(collapse);
-        }
-        if (out.getVersion().onOrAfter(Version.V_6_0_0_beta1)) {
-            out.writeBoolean(trackTotalHits);
-        }
+        out.writeOptionalWriteable(collapse);
+        out.writeOptionalInt(trackTotalHitsUpTo);
     }
 
     /**
@@ -415,6 +420,23 @@ public final class SearchSourceBuilder implements Writeable, ToXContentObject, R
     }
 
     /**
+     * Should each {@link org.elasticsearch.search.SearchHit} be returned with the
+     * sequence number and primary term of the last modification of the document.
+     */
+    public SearchSourceBuilder seqNoAndPrimaryTerm(Boolean seqNoAndPrimaryTerm) {
+        this.seqNoAndPrimaryTerm = seqNoAndPrimaryTerm;
+        return this;
+    }
+
+    /**
+     * Indicates whether {@link org.elasticsearch.search.SearchHit}s should be returned with the
+     * sequence number and primary term of the last modification of the document.
+     */
+    public Boolean seqNoAndPrimaryTerm() {
+        return seqNoAndPrimaryTerm;
+    }
+
+    /**
      * An optional timeout to control how long search is allowed to take.
      */
     public SearchSourceBuilder timeout(TimeValue timeout) {
@@ -513,12 +535,26 @@ public final class SearchSourceBuilder implements Writeable, ToXContentObject, R
     /**
      * Indicates if the total hit count for the query should be tracked.
      */
-    public boolean trackTotalHits() {
-        return trackTotalHits;
+    public SearchSourceBuilder trackTotalHits(boolean trackTotalHits) {
+        this.trackTotalHitsUpTo = trackTotalHits ? TRACK_TOTAL_HITS_ACCURATE : TRACK_TOTAL_HITS_DISABLED;
+        return this;
     }
 
-    public SearchSourceBuilder trackTotalHits(boolean trackTotalHits) {
-        this.trackTotalHits = trackTotalHits;
+    /**
+     * Returns the total hit count that should be tracked or null if the value is unset.
+     * Defaults to null.
+     */
+    @Nullable
+    public Integer trackTotalHitsUpTo() {
+        return trackTotalHitsUpTo;
+    }
+
+    public SearchSourceBuilder trackTotalHitsUpTo(int trackTotalHitsUpTo) {
+        if (trackTotalHitsUpTo < TRACK_TOTAL_HITS_DISABLED) {
+            throw new IllegalArgumentException("[track_total_hits] parameter must be positive or equals to -1, " +
+                "got " + trackTotalHitsUpTo);
+        }
+        this.trackTotalHitsUpTo = trackTotalHitsUpTo;
         return this;
     }
 
@@ -573,23 +609,23 @@ public final class SearchSourceBuilder implements Writeable, ToXContentObject, R
      * Add an aggregation to perform as part of the search.
      */
     public SearchSourceBuilder aggregation(AggregationBuilder aggregation) {
-            if (aggregations == null) {
+        if (aggregations == null) {
             aggregations = AggregatorFactories.builder();
-            }
+        }
         aggregations.addAggregator(aggregation);
-            return this;
+        return this;
     }
 
     /**
      * Add an aggregation to perform as part of the search.
      */
     public SearchSourceBuilder aggregation(PipelineAggregationBuilder aggregation) {
-            if (aggregations == null) {
+        if (aggregations == null) {
             aggregations = AggregatorFactories.builder();
-            }
-        aggregations.addPipelineAggregator(aggregation);
-            return this;
         }
+        aggregations.addPipelineAggregator(aggregation);
+        return this;
+    }
 
     /**
      * Gets the bytes representing the aggregation builders for this request.
@@ -657,6 +693,7 @@ public final class SearchSourceBuilder implements Writeable, ToXContentObject, R
     /**
      * Gets the bytes representing the rescore builders for this request.
      */
+    @SuppressWarnings("rawtypes")
     public List<RescorerBuilder> rescores() {
         return rescoreBuilders;
     }
@@ -764,20 +801,28 @@ public final class SearchSourceBuilder implements Writeable, ToXContentObject, R
     /**
      * Gets the docvalue fields.
      */
-    public List<String> docValueFields() {
+    public List<FieldAndFormat> docValueFields() {
         return docValueFields;
     }
 
     /**
-     * Adds a field to load from the docvalue and return as part of the
+     * Adds a field to load from the doc values and return as part of the
      * search request.
      */
-    public SearchSourceBuilder docValueField(String name) {
+    public SearchSourceBuilder docValueField(String name, @Nullable String format) {
         if (docValueFields == null) {
             docValueFields = new ArrayList<>();
         }
-        docValueFields.add(name);
+        docValueFields.add(new FieldAndFormat(name, format));
         return this;
+    }
+
+    /**
+     * Adds a field to load from the doc values and return as part of the
+     * search request.
+     */
+    public SearchSourceBuilder docValueField(String name) {
+        return docValueField(name, null);
     }
 
     /**
@@ -878,6 +923,7 @@ public final class SearchSourceBuilder implements Writeable, ToXContentObject, R
      * infinitely.
      */
     @Override
+    @SuppressWarnings({"unchecked", "rawtypes"})
     public SearchSourceBuilder rewrite(QueryRewriteContext context) throws IOException {
         assert (this.equals(shallowCopy(queryBuilder, postQueryBuilder, aggregations, sliceBuilder, sorts, rescoreBuilders,
             highlightBuilder)));
@@ -913,14 +959,15 @@ public final class SearchSourceBuilder implements Writeable, ToXContentObject, R
     /**
      * Create a shallow copy of this builder with a new slice configuration.
      */
-    public SearchSourceBuilder copyWithNewSlice(SliceBuilder slice) {
-        return shallowCopy(queryBuilder, postQueryBuilder, aggregations, slice, sorts, rescoreBuilders, highlightBuilder);
+    public SearchSourceBuilder shallowCopy() {
+        return shallowCopy(queryBuilder, postQueryBuilder, aggregations, sliceBuilder, sorts, rescoreBuilders, highlightBuilder);
     }
 
     /**
      * Create a shallow copy of this source replaced {@link #queryBuilder}, {@link #postQueryBuilder}, and {@link #sliceBuilder}. Used by
-     * {@link #rewrite(QueryRewriteContext)} and {@link #copyWithNewSlice(SliceBuilder)}.
+     * {@link #rewrite(QueryRewriteContext)}}.
      */
+    @SuppressWarnings("rawtypes")
     private SearchSourceBuilder shallowCopy(QueryBuilder queryBuilder, QueryBuilder postQueryBuilder,
                                             AggregatorFactories.Builder aggregations, SliceBuilder slice, List<SortBuilder<?>> sorts,
                                             List<RescorerBuilder> rescoreBuilders, HighlightBuilder highlightBuilder) {
@@ -949,8 +996,9 @@ public final class SearchSourceBuilder implements Writeable, ToXContentObject, R
         rewrittenBuilder.terminateAfter = terminateAfter;
         rewrittenBuilder.timeout = timeout;
         rewrittenBuilder.trackScores = trackScores;
-        rewrittenBuilder.trackTotalHits = trackTotalHits;
+        rewrittenBuilder.trackTotalHitsUpTo = trackTotalHitsUpTo;
         rewrittenBuilder.version = version;
+        rewrittenBuilder.seqNoAndPrimaryTerm = seqNoAndPrimaryTerm;
         rewrittenBuilder.collapse = collapse;
         return rewrittenBuilder;
     }
@@ -990,12 +1038,19 @@ public final class SearchSourceBuilder implements Writeable, ToXContentObject, R
                     minScore = parser.floatValue();
                 } else if (VERSION_FIELD.match(currentFieldName, parser.getDeprecationHandler())) {
                     version = parser.booleanValue();
+                } else if (SEQ_NO_PRIMARY_TERM_FIELD.match(currentFieldName, parser.getDeprecationHandler())) {
+                    seqNoAndPrimaryTerm = parser.booleanValue();
                 } else if (EXPLAIN_FIELD.match(currentFieldName, parser.getDeprecationHandler())) {
                     explain = parser.booleanValue();
                 } else if (TRACK_SCORES_FIELD.match(currentFieldName, parser.getDeprecationHandler())) {
                     trackScores = parser.booleanValue();
                 } else if (TRACK_TOTAL_HITS_FIELD.match(currentFieldName, parser.getDeprecationHandler())) {
-                    trackTotalHits = parser.booleanValue();
+                    if (token == XContentParser.Token.VALUE_BOOLEAN ||
+                        (token == XContentParser.Token.VALUE_STRING && Booleans.isBoolean(parser.text()))) {
+                        trackTotalHitsUpTo = parser.booleanValue() ? TRACK_TOTAL_HITS_ACCURATE : TRACK_TOTAL_HITS_DISABLED;
+                    } else {
+                        trackTotalHitsUpTo = parser.intValue();
+                    }
                 } else if (_SOURCE_FIELD.match(currentFieldName, parser.getDeprecationHandler())) {
                     fetchSourceContext = FetchSourceContext.fromXContent(parser);
                 } else if (STORED_FIELDS_FIELD.match(currentFieldName, parser.getDeprecationHandler())) {
@@ -1022,7 +1077,7 @@ public final class SearchSourceBuilder implements Writeable, ToXContentObject, R
                         scriptFields.add(new ScriptField(parser));
                     }
                 } else if (INDICES_BOOST_FIELD.match(currentFieldName, parser.getDeprecationHandler())) {
-                    DEPRECATION_LOGGER.deprecated(
+                    deprecationLogger.deprecated(
                         "Object format in indices_boost is deprecated, please use array format instead");
                     while ((token = parser.nextToken()) != XContentParser.Token.END_OBJECT) {
                         if (token == XContentParser.Token.FIELD_NAME) {
@@ -1076,12 +1131,7 @@ public final class SearchSourceBuilder implements Writeable, ToXContentObject, R
                 } else if (DOCVALUE_FIELDS_FIELD.match(currentFieldName, parser.getDeprecationHandler())) {
                     docValueFields = new ArrayList<>();
                     while ((token = parser.nextToken()) != XContentParser.Token.END_ARRAY) {
-                        if (token == XContentParser.Token.VALUE_STRING) {
-                            docValueFields.add(parser.text());
-                        } else {
-                            throw new ParsingException(parser.getTokenLocation(), "Expected [" + XContentParser.Token.VALUE_STRING +
-                                "] in [" + currentFieldName + "] but found [" + token + "]", parser.getTokenLocation());
-                        }
+                        docValueFields.add(FieldAndFormat.fromXContent(parser));
                     }
                 } else if (INDICES_BOOST_FIELD.match(currentFieldName, parser.getDeprecationHandler())) {
                     while ((token = parser.nextToken()) != XContentParser.Token.END_ARRAY) {
@@ -1125,9 +1175,7 @@ public final class SearchSourceBuilder implements Writeable, ToXContentObject, R
         }
     }
 
-    @Override
-    public XContentBuilder toXContent(XContentBuilder builder, Params params) throws IOException {
-        builder.startObject();
+    public XContentBuilder innerToXContent(XContentBuilder builder, Params params) throws IOException {
         if (from != -1) {
             builder.field(FROM_FIELD.getPreferredName(), from);
         }
@@ -1159,6 +1207,10 @@ public final class SearchSourceBuilder implements Writeable, ToXContentObject, R
             builder.field(VERSION_FIELD.getPreferredName(), version);
         }
 
+        if (seqNoAndPrimaryTerm != null) {
+            builder.field(SEQ_NO_PRIMARY_TERM_FIELD.getPreferredName(), seqNoAndPrimaryTerm);
+        }
+
         if (explain != null) {
             builder.field(EXPLAIN_FIELD.getPreferredName(), explain);
         }
@@ -1177,8 +1229,13 @@ public final class SearchSourceBuilder implements Writeable, ToXContentObject, R
 
         if (docValueFields != null) {
             builder.startArray(DOCVALUE_FIELDS_FIELD.getPreferredName());
-            for (String docValueField : docValueFields) {
-                builder.value(docValueField);
+            for (FieldAndFormat docValueField : docValueFields) {
+                builder.startObject()
+                    .field("field", docValueField.field);
+                if (docValueField.format != null) {
+                    builder.field("format", docValueField.format);
+                }
+                builder.endObject();
             }
             builder.endArray();
         }
@@ -1203,8 +1260,8 @@ public final class SearchSourceBuilder implements Writeable, ToXContentObject, R
             builder.field(TRACK_SCORES_FIELD.getPreferredName(), true);
         }
 
-        if (trackTotalHits == false) {
-            builder.field(TRACK_TOTAL_HITS_FIELD.getPreferredName(), false);
+        if (trackTotalHitsUpTo != null) {
+            builder.field(TRACK_TOTAL_HITS_FIELD.getPreferredName(), trackTotalHitsUpTo);
         }
 
         if (searchAfterBuilder != null) {
@@ -1260,6 +1317,13 @@ public final class SearchSourceBuilder implements Writeable, ToXContentObject, R
         if (collapse != null) {
             builder.field(COLLAPSE.getPreferredName(), collapse);
         }
+        return builder;
+    }
+
+    @Override
+    public XContentBuilder toXContent(XContentBuilder builder, Params params) throws IOException {
+        builder.startObject();
+        innerToXContent(builder, params);
         builder.endObject();
         return builder;
     }
@@ -1465,7 +1529,7 @@ public final class SearchSourceBuilder implements Writeable, ToXContentObject, R
         return Objects.hash(aggregations, explain, fetchSourceContext, docValueFields, storedFieldsContext, from, highlightBuilder,
                 indexBoosts, minScore, postQueryBuilder, queryBuilder, rescoreBuilders, scriptFields, size,
                 sorts, searchAfterBuilder, sliceBuilder, stats, suggestBuilder, terminateAfter, timeout, trackScores, version,
-                profile, extBuilders, collapse, trackTotalHits);
+                seqNoAndPrimaryTerm, profile, extBuilders, collapse, trackTotalHitsUpTo);
     }
 
     @Override
@@ -1500,10 +1564,11 @@ public final class SearchSourceBuilder implements Writeable, ToXContentObject, R
                 && Objects.equals(timeout, other.timeout)
                 && Objects.equals(trackScores, other.trackScores)
                 && Objects.equals(version, other.version)
+                && Objects.equals(seqNoAndPrimaryTerm, other.seqNoAndPrimaryTerm)
                 && Objects.equals(profile, other.profile)
                 && Objects.equals(extBuilders, other.extBuilders)
                 && Objects.equals(collapse, other.collapse)
-                && Objects.equals(trackTotalHits, other.trackTotalHits);
+                && Objects.equals(trackTotalHitsUpTo, other.trackTotalHitsUpTo);
     }
 
     @Override

@@ -5,15 +5,13 @@
  */
 package org.elasticsearch.xpack.security;
 
-import org.apache.lucene.util.LuceneTestCase.AwaitsFix;
 import org.elasticsearch.action.admin.indices.template.get.GetIndexTemplatesResponse;
-import org.elasticsearch.action.admin.indices.template.put.PutIndexTemplateResponse;
+import org.elasticsearch.action.support.master.AcknowledgedResponse;
 import org.elasticsearch.client.Client;
 import org.elasticsearch.cluster.ClusterChangedEvent;
-import org.elasticsearch.cluster.metadata.IndexTemplateMetaData;
+import org.elasticsearch.cluster.metadata.IndexTemplateMetadata;
 import org.elasticsearch.cluster.metadata.TemplateUpgradeService;
 import org.elasticsearch.cluster.service.ClusterService;
-import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.test.ESIntegTestCase.ClusterScope;
 import org.elasticsearch.test.ESIntegTestCase.Scope;
 import org.elasticsearch.test.SecurityIntegTestCase;
@@ -32,7 +30,7 @@ import static org.hamcrest.Matchers.not;
 /**
  * This test ensures, that the plugin template upgrader can add and remove
  * templates when started within security, as this requires certain
- * system priviliges
+ * system privileges
  */
 @ClusterScope(maxNumDataNodes = 1, scope = Scope.SUITE, numClientNodes = 0)
 public class TemplateUpgraderTests extends SecurityIntegTestCase {
@@ -41,23 +39,23 @@ public class TemplateUpgraderTests extends SecurityIntegTestCase {
         ClusterService clusterService = internalCluster().getInstance(ClusterService.class, internalCluster().getMasterName());
         ThreadPool threadPool = internalCluster().getInstance(ThreadPool.class, internalCluster().getMasterName());
         Client client = internalCluster().getInstance(Client.class, internalCluster().getMasterName());
-        UnaryOperator<Map<String, IndexTemplateMetaData>> indexTemplateMetaDataUpgraders = map -> {
+        UnaryOperator<Map<String, IndexTemplateMetadata>> indexTemplateMetadataUpgraders = map -> {
             map.remove("removed-template");
-            map.put("added-template", IndexTemplateMetaData.builder("added-template")
+            map.put("added-template", IndexTemplateMetadata.builder("added-template")
                     .order(1)
                     .patterns(Collections.singletonList(randomAlphaOfLength(10))).build());
             return map;
         };
 
-        PutIndexTemplateResponse putIndexTemplateResponse = client().admin().indices().preparePutTemplate("removed-template")
+        AcknowledgedResponse putIndexTemplateResponse = client().admin().indices().preparePutTemplate("removed-template")
                 .setOrder(1)
                 .setPatterns(Collections.singletonList(randomAlphaOfLength(10)))
                 .get();
         assertAcked(putIndexTemplateResponse);
         assertTemplates("removed-template", "added-template");
 
-        TemplateUpgradeService templateUpgradeService = new TemplateUpgradeService(Settings.EMPTY, client, clusterService, threadPool,
-                Collections.singleton(indexTemplateMetaDataUpgraders));
+        TemplateUpgradeService templateUpgradeService = new TemplateUpgradeService(client, clusterService, threadPool,
+                Collections.singleton(indexTemplateMetadataUpgraders));
 
         // ensure the cluster listener gets triggered
         ClusterChangedEvent event = new ClusterChangedEvent("testing", clusterService.state(), clusterService.state());
@@ -68,7 +66,7 @@ public class TemplateUpgraderTests extends SecurityIntegTestCase {
 
     private void assertTemplates(String existingTemplate, String deletedTemplate) {
         GetIndexTemplatesResponse response = client().admin().indices().prepareGetTemplates().get();
-        List<String> templateNames = response.getIndexTemplates().stream().map(IndexTemplateMetaData::name).collect(Collectors.toList());
+        List<String> templateNames = response.getIndexTemplates().stream().map(IndexTemplateMetadata::name).collect(Collectors.toList());
         assertThat(templateNames, hasItem(existingTemplate));
         assertThat(templateNames, not(hasItem(deletedTemplate)));
     }

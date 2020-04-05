@@ -6,12 +6,20 @@
 package org.elasticsearch.xpack.security.transport;
 
 import org.elasticsearch.Version;
+import org.elasticsearch.action.main.MainAction;
 import org.elasticsearch.action.support.DestructiveOperations;
+import org.elasticsearch.cluster.ClusterState;
+import org.elasticsearch.cluster.block.ClusterBlocks;
+import org.elasticsearch.cluster.service.ClusterService;
+import org.elasticsearch.common.io.stream.StreamInput;
 import org.elasticsearch.common.settings.ClusterSettings;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.common.util.concurrent.ThreadContext;
+import org.elasticsearch.gateway.GatewayService;
 import org.elasticsearch.license.XPackLicenseState;
+import org.elasticsearch.test.ClusterServiceUtils;
 import org.elasticsearch.test.ESTestCase;
+import org.elasticsearch.threadpool.TestThreadPool;
 import org.elasticsearch.threadpool.ThreadPool;
 import org.elasticsearch.transport.Transport;
 import org.elasticsearch.transport.Transport.Connection;
@@ -31,12 +39,15 @@ import org.elasticsearch.xpack.core.security.user.User;
 import org.elasticsearch.xpack.core.ssl.SSLService;
 import org.elasticsearch.xpack.security.authc.AuthenticationService;
 import org.elasticsearch.xpack.security.authz.AuthorizationService;
+import org.junit.After;
 
 import java.util.Collections;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
 
+import static org.hamcrest.Matchers.is;
+import static org.hamcrest.Matchers.nullValue;
 import static org.mockito.Matchers.any;
 import static org.mockito.Matchers.eq;
 import static org.mockito.Mockito.mock;
@@ -44,7 +55,6 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoMoreInteractions;
-import static org.mockito.Mockito.verifyZeroInteractions;
 import static org.mockito.Mockito.when;
 
 public class SecurityServerTransportInterceptorTests extends ESTestCase {
@@ -54,27 +64,35 @@ public class SecurityServerTransportInterceptorTests extends ESTestCase {
     private ThreadContext threadContext;
     private XPackLicenseState xPackLicenseState;
     private SecurityContext securityContext;
+    private ClusterService clusterService;
 
     @Override
     public void setUp() throws Exception {
         super.setUp();
         settings = Settings.builder().put("path.home", createTempDir()).build();
-        threadPool = mock(ThreadPool.class);
-        threadContext = new ThreadContext(settings);
-        when(threadPool.getThreadContext()).thenReturn(threadContext);
+        threadPool = new TestThreadPool(getTestName());
+        clusterService = ClusterServiceUtils.createClusterService(threadPool);
+        threadContext = threadPool.getThreadContext();
         securityContext = spy(new SecurityContext(settings, threadPool.getThreadContext()));
         xPackLicenseState = mock(XPackLicenseState.class);
         when(xPackLicenseState.isAuthAllowed()).thenReturn(true);
-        when(xPackLicenseState.isSecurityEnabled()).thenReturn(true);
     }
 
-    public void testSendAsyncUnlicensed() {
+    @After
+    public void stopThreadPool() throws Exception {
+        clusterService.close();
+        terminate(threadPool);
+    }
+
+    public void testSendAsyncUserActionWhenUnlicensed() {
         SecurityServerTransportInterceptor interceptor = new SecurityServerTransportInterceptor(settings, threadPool,
                 mock(AuthenticationService.class), mock(AuthorizationService.class), xPackLicenseState, mock(SSLService.class),
                 securityContext, new DestructiveOperations(Settings.EMPTY, new ClusterSettings(Settings.EMPTY,
-                Collections.singleton(DestructiveOperations.REQUIRES_NAME_SETTING))));
+                Collections.singleton(DestructiveOperations.REQUIRES_NAME_SETTING))), clusterService);
+        ClusterServiceUtils.setState(clusterService, clusterService.state()); // force state update to trigger listener
         when(xPackLicenseState.isAuthAllowed()).thenReturn(false);
         AtomicBoolean calledWrappedSender = new AtomicBoolean(false);
+        AtomicReference<User> sendingUser = new AtomicReference<>();
         AsyncSender sender = interceptor.interceptSender(new AsyncSender() {
             @Override
             public <T extends TransportResponse> void sendRequest(Transport.Connection connection, String action, TransportRequest request,
@@ -82,14 +100,80 @@ public class SecurityServerTransportInterceptorTests extends ESTestCase {
                 if (calledWrappedSender.compareAndSet(false, true) == false) {
                     fail("sender called more than once!");
                 }
+                sendingUser.set(securityContext.getUser());
             }
         });
-        sender.sendRequest(null, null, null, null, null);
+        Connection connection = mock(Connection.class);
+        when(connection.getVersion()).thenReturn(Version.CURRENT);
+        sender.sendRequest(connection, MainAction.NAME, null, null, null);
         assertTrue(calledWrappedSender.get());
+        assertThat(sendingUser.get(), nullValue());
         verify(xPackLicenseState).isAuthAllowed();
-        verify(xPackLicenseState).isSecurityEnabled();
         verifyNoMoreInteractions(xPackLicenseState);
-        verifyZeroInteractions(securityContext);
+    }
+
+    public void testSendAsyncInternalActionWhenUnlicensed() {
+        SecurityServerTransportInterceptor interceptor = new SecurityServerTransportInterceptor(settings, threadPool,
+                mock(AuthenticationService.class), mock(AuthorizationService.class), xPackLicenseState, mock(SSLService.class),
+                securityContext, new DestructiveOperations(Settings.EMPTY, new ClusterSettings(Settings.EMPTY,
+                Collections.singleton(DestructiveOperations.REQUIRES_NAME_SETTING))), clusterService);
+        ClusterServiceUtils.setState(clusterService, clusterService.state()); // force state update to trigger listener
+        when(xPackLicenseState.isAuthAllowed()).thenReturn(false);
+        AtomicBoolean calledWrappedSender = new AtomicBoolean(false);
+        AtomicReference<User> sendingUser = new AtomicReference<>();
+        AsyncSender sender = interceptor.interceptSender(new AsyncSender() {
+            @Override
+            public <T extends TransportResponse> void sendRequest(Transport.Connection connection, String action, TransportRequest request,
+                                                                  TransportRequestOptions options, TransportResponseHandler<T> handler) {
+                if (calledWrappedSender.compareAndSet(false, true) == false) {
+                    fail("sender called more than once!");
+                }
+                sendingUser.set(securityContext.getUser());
+            }
+        });
+        Connection connection = mock(Connection.class);
+        when(connection.getVersion()).thenReturn(Version.CURRENT);
+        sender.sendRequest(connection, "internal:foo", null, null, null);
+        assertTrue(calledWrappedSender.get());
+        assertThat(sendingUser.get(), is(SystemUser.INSTANCE));
+        verify(xPackLicenseState).isAuthAllowed();
+        verify(securityContext).executeAsUser(any(User.class), any(Consumer.class), eq(Version.CURRENT));
+        verifyNoMoreInteractions(xPackLicenseState);
+    }
+
+    public void testSendAsyncWithStateNotRecovered() {
+        SecurityServerTransportInterceptor interceptor = new SecurityServerTransportInterceptor(settings, threadPool,
+            mock(AuthenticationService.class), mock(AuthorizationService.class), xPackLicenseState, mock(SSLService.class),
+            securityContext, new DestructiveOperations(Settings.EMPTY, new ClusterSettings(Settings.EMPTY,
+            Collections.singleton(DestructiveOperations.REQUIRES_NAME_SETTING))), clusterService);
+        final boolean authAllowed = randomBoolean();
+        when(xPackLicenseState.isAuthAllowed()).thenReturn(authAllowed);
+        ClusterState notRecovered = ClusterState.builder(clusterService.state())
+            .blocks(ClusterBlocks.builder().addGlobalBlock(GatewayService.STATE_NOT_RECOVERED_BLOCK).build())
+            .build();
+        ClusterServiceUtils.setState(clusterService, notRecovered);
+        assertTrue(clusterService.state().blocks().hasGlobalBlock(GatewayService.STATE_NOT_RECOVERED_BLOCK));
+
+        AtomicBoolean calledWrappedSender = new AtomicBoolean(false);
+        AtomicReference<User> sendingUser = new AtomicReference<>();
+        AsyncSender sender = interceptor.interceptSender(new AsyncSender() {
+            @Override
+            public <T extends TransportResponse> void sendRequest(Transport.Connection connection, String action, TransportRequest request,
+                                                                  TransportRequestOptions options, TransportResponseHandler<T> handler) {
+                if (calledWrappedSender.compareAndSet(false, true) == false) {
+                    fail("sender called more than once!");
+                }
+                sendingUser.set(securityContext.getUser());
+            }
+        });
+        Connection connection = mock(Connection.class);
+        when(connection.getVersion()).thenReturn(Version.CURRENT);
+        sender.sendRequest(connection, "internal:foo", null, null, null);
+        assertTrue(calledWrappedSender.get());
+        assertEquals(SystemUser.INSTANCE, sendingUser.get());
+        verify(xPackLicenseState).isAuthAllowed();
+        verify(securityContext).executeAsUser(any(User.class), any(Consumer.class), eq(Version.CURRENT));
+        verifyNoMoreInteractions(xPackLicenseState);
     }
 
     public void testSendAsync() throws Exception {
@@ -100,7 +184,8 @@ public class SecurityServerTransportInterceptorTests extends ESTestCase {
         SecurityServerTransportInterceptor interceptor = new SecurityServerTransportInterceptor(settings, threadPool,
                 mock(AuthenticationService.class), mock(AuthorizationService.class), xPackLicenseState, mock(SSLService.class),
                 securityContext, new DestructiveOperations(Settings.EMPTY, new ClusterSettings(Settings.EMPTY,
-                Collections.singleton(DestructiveOperations.REQUIRES_NAME_SETTING))));
+                Collections.singleton(DestructiveOperations.REQUIRES_NAME_SETTING))), clusterService);
+        ClusterServiceUtils.setState(clusterService, clusterService.state()); // force state update to trigger listener
 
         AtomicBoolean calledWrappedSender = new AtomicBoolean(false);
         AtomicReference<User> sendingUser = new AtomicReference<>();
@@ -121,7 +206,6 @@ public class SecurityServerTransportInterceptorTests extends ESTestCase {
         assertEquals(user, sendingUser.get());
         assertEquals(user, securityContext.getUser());
         verify(xPackLicenseState).isAuthAllowed();
-        verify(xPackLicenseState).isSecurityEnabled();
         verify(securityContext, never()).executeAsUser(any(User.class), any(Consumer.class), any(Version.class));
         verifyNoMoreInteractions(xPackLicenseState);
     }
@@ -136,7 +220,8 @@ public class SecurityServerTransportInterceptorTests extends ESTestCase {
         SecurityServerTransportInterceptor interceptor = new SecurityServerTransportInterceptor(settings, threadPool,
                 mock(AuthenticationService.class), mock(AuthorizationService.class), xPackLicenseState, mock(SSLService.class),
                 securityContext, new DestructiveOperations(Settings.EMPTY, new ClusterSettings(Settings.EMPTY,
-                Collections.singleton(DestructiveOperations.REQUIRES_NAME_SETTING))));
+                Collections.singleton(DestructiveOperations.REQUIRES_NAME_SETTING))), clusterService);
+        ClusterServiceUtils.setState(clusterService, clusterService.state()); // force state update to trigger listener
 
         AtomicBoolean calledWrappedSender = new AtomicBoolean(false);
         AtomicReference<User> sendingUser = new AtomicReference<>();
@@ -158,7 +243,6 @@ public class SecurityServerTransportInterceptorTests extends ESTestCase {
         assertEquals(SystemUser.INSTANCE, sendingUser.get());
         assertEquals(user, securityContext.getUser());
         verify(xPackLicenseState).isAuthAllowed();
-        verify(xPackLicenseState).isSecurityEnabled();
         verify(securityContext).executeAsUser(any(User.class), any(Consumer.class), eq(Version.CURRENT));
         verifyNoMoreInteractions(xPackLicenseState);
     }
@@ -167,11 +251,12 @@ public class SecurityServerTransportInterceptorTests extends ESTestCase {
         SecurityServerTransportInterceptor interceptor = new SecurityServerTransportInterceptor(settings, threadPool,
                 mock(AuthenticationService.class), mock(AuthorizationService.class), xPackLicenseState, mock(SSLService.class),
                 securityContext, new DestructiveOperations(Settings.EMPTY, new ClusterSettings(Settings.EMPTY,
-                Collections.singleton(DestructiveOperations.REQUIRES_NAME_SETTING)))) {
+                Collections.singleton(DestructiveOperations.REQUIRES_NAME_SETTING))), clusterService) {
             @Override
             void assertNoAuthentication(String action) {
             }
         };
+        ClusterServiceUtils.setState(clusterService, clusterService.state()); // force state update to trigger listener
 
         assertNull(securityContext.getUser());
         AsyncSender sender = interceptor.interceptSender(new AsyncSender() {
@@ -188,7 +273,6 @@ public class SecurityServerTransportInterceptorTests extends ESTestCase {
         assertEquals("there should always be a user when sending a message for action [indices:foo]", e.getMessage());
         assertNull(securityContext.getUser());
         verify(xPackLicenseState).isAuthAllowed();
-        verify(xPackLicenseState).isSecurityEnabled();
         verify(securityContext, never()).executeAsUser(any(User.class), any(Consumer.class), any(Version.class));
         verifyNoMoreInteractions(xPackLicenseState);
     }
@@ -203,7 +287,8 @@ public class SecurityServerTransportInterceptorTests extends ESTestCase {
         SecurityServerTransportInterceptor interceptor = new SecurityServerTransportInterceptor(settings, threadPool,
                 mock(AuthenticationService.class), mock(AuthorizationService.class), xPackLicenseState, mock(SSLService.class),
                 securityContext, new DestructiveOperations(Settings.EMPTY, new ClusterSettings(Settings.EMPTY,
-                Collections.singleton(DestructiveOperations.REQUIRES_NAME_SETTING))));
+                Collections.singleton(DestructiveOperations.REQUIRES_NAME_SETTING))), clusterService);
+        ClusterServiceUtils.setState(clusterService, clusterService.state()); // force state update to trigger listener
 
         AtomicBoolean calledWrappedSender = new AtomicBoolean(false);
         AtomicReference<User> sendingUser = new AtomicReference<>();
@@ -243,7 +328,8 @@ public class SecurityServerTransportInterceptorTests extends ESTestCase {
         SecurityServerTransportInterceptor interceptor = new SecurityServerTransportInterceptor(settings, threadPool,
                 mock(AuthenticationService.class), mock(AuthorizationService.class), xPackLicenseState, mock(SSLService.class),
                 securityContext, new DestructiveOperations(Settings.EMPTY, new ClusterSettings(Settings.EMPTY,
-                Collections.singleton(DestructiveOperations.REQUIRES_NAME_SETTING))));
+                Collections.singleton(DestructiveOperations.REQUIRES_NAME_SETTING))), clusterService);
+        ClusterServiceUtils.setState(clusterService, clusterService.state()); // force state update to trigger listener
 
         AtomicBoolean calledWrappedSender = new AtomicBoolean(false);
         AtomicReference<User> sendingUser = new AtomicReference<>();
@@ -285,7 +371,7 @@ public class SecurityServerTransportInterceptorTests extends ESTestCase {
                     threadContext.wrapRestorable(storedContext), new TransportResponseHandler<Empty>() {
 
                 @Override
-                public Empty newInstance() {
+                public Empty read(StreamInput in) {
                     return Empty.INSTANCE;
                 }
 
@@ -313,51 +399,50 @@ public class SecurityServerTransportInterceptorTests extends ESTestCase {
     }
 
     public void testContextRestoreResponseHandlerRestoreOriginalContext() throws Exception {
-        try (ThreadContext threadContext = new ThreadContext(Settings.EMPTY)) {
-            threadContext.putTransient("foo", "bar");
-            threadContext.putHeader("key", "value");
-            TransportResponseHandler<Empty> handler;
-            try (ThreadContext.StoredContext ignore = threadContext.stashContext()) {
-                threadContext.putTransient("foo", "different_bar");
-                threadContext.putHeader("key", "value2");
-                handler = new TransportService.ContextRestoreResponseHandler<>(threadContext.newRestorableContext(true),
-                        new TransportResponseHandler<Empty>() {
+        ThreadContext threadContext = new ThreadContext(Settings.EMPTY);
+        threadContext.putTransient("foo", "bar");
+        threadContext.putHeader("key", "value");
+        TransportResponseHandler<Empty> handler;
+        try (ThreadContext.StoredContext ignore = threadContext.stashContext()) {
+            threadContext.putTransient("foo", "different_bar");
+            threadContext.putHeader("key", "value2");
+            handler = new TransportService.ContextRestoreResponseHandler<>(threadContext.newRestorableContext(true),
+                    new TransportResponseHandler<Empty>() {
 
-                            @Override
-                            public Empty newInstance() {
-                                return Empty.INSTANCE;
-                            }
+                        @Override
+                        public Empty read(StreamInput in) {
+                            return Empty.INSTANCE;
+                        }
 
-                            @Override
-                            public void handleResponse(Empty response) {
-                                assertEquals("different_bar", threadContext.getTransient("foo"));
-                                assertEquals("value2", threadContext.getHeader("key"));
-                            }
+                        @Override
+                        public void handleResponse(Empty response) {
+                            assertEquals("different_bar", threadContext.getTransient("foo"));
+                            assertEquals("value2", threadContext.getHeader("key"));
+                        }
 
-                            @Override
-                            public void handleException(TransportException exp) {
-                                assertEquals("different_bar", threadContext.getTransient("foo"));
-                                assertEquals("value2", threadContext.getHeader("key"));
-                            }
+                        @Override
+                        public void handleException(TransportException exp) {
+                            assertEquals("different_bar", threadContext.getTransient("foo"));
+                            assertEquals("value2", threadContext.getHeader("key"));
+                        }
 
-                            @Override
-                            public String executor() {
-                                return null;
-                            }
-                        });
-            }
-
-            assertEquals("bar", threadContext.getTransient("foo"));
-            assertEquals("value", threadContext.getHeader("key"));
-            handler.handleResponse(null);
-
-            assertEquals("bar", threadContext.getTransient("foo"));
-            assertEquals("value", threadContext.getHeader("key"));
-            handler.handleException(null);
-
-            assertEquals("bar", threadContext.getTransient("foo"));
-            assertEquals("value", threadContext.getHeader("key"));
+                        @Override
+                        public String executor() {
+                            return null;
+                        }
+                    });
         }
+
+        assertEquals("bar", threadContext.getTransient("foo"));
+        assertEquals("value", threadContext.getHeader("key"));
+        handler.handleResponse(null);
+
+        assertEquals("bar", threadContext.getTransient("foo"));
+        assertEquals("value", threadContext.getHeader("key"));
+        handler.handleException(null);
+
+        assertEquals("bar", threadContext.getTransient("foo"));
+        assertEquals("value", threadContext.getHeader("key"));
     }
 
     private String[] randomRoles() {

@@ -20,17 +20,16 @@
 package org.elasticsearch.rest.action.admin.cluster;
 
 import org.elasticsearch.action.admin.cluster.repositories.get.GetRepositoriesRequest;
-import org.elasticsearch.action.admin.cluster.repositories.get.GetRepositoriesResponse;
 import org.elasticsearch.client.node.NodeClient;
 import org.elasticsearch.common.Strings;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.common.settings.SettingsFilter;
 import org.elasticsearch.rest.BaseRestHandler;
-import org.elasticsearch.rest.RestController;
 import org.elasticsearch.rest.RestRequest;
 import org.elasticsearch.rest.action.RestToXContentListener;
 
 import java.io.IOException;
+import java.util.List;
 import java.util.Set;
 
 import static org.elasticsearch.client.Requests.getRepositoryRequest;
@@ -43,16 +42,20 @@ public class RestGetRepositoriesAction extends BaseRestHandler {
 
     private final SettingsFilter settingsFilter;
 
-    public RestGetRepositoriesAction(Settings settings, RestController controller, SettingsFilter settingsFilter) {
-        super(settings);
-        controller.registerHandler(GET, "/_snapshot", this);
-        controller.registerHandler(GET, "/_snapshot/{repository}", this);
+    public RestGetRepositoriesAction(SettingsFilter settingsFilter) {
         this.settingsFilter = settingsFilter;
     }
 
     @Override
     public String getName() {
-        return "get_respositories_action";
+        return "get_repositories_action";
+    }
+
+    @Override
+    public List<Route> routes() {
+        return List.of(
+            new Route(GET, "/_snapshot"),
+            new Route(GET, "/_snapshot/{repository}"));
     }
 
     @Override

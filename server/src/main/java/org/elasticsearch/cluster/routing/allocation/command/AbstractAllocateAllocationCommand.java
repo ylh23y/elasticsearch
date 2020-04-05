@@ -186,7 +186,8 @@ public abstract class AbstractAllocateAllocationCommand implements AllocationCom
      * @param routingNode the node to initialize it to
      * @param shardRouting the shard routing that is to be matched in unassigned shards
      */
-    protected void initializeUnassignedShard(RoutingAllocation allocation, RoutingNodes routingNodes, RoutingNode routingNode, ShardRouting shardRouting) {
+    protected void initializeUnassignedShard(RoutingAllocation allocation, RoutingNodes routingNodes,
+                                             RoutingNode routingNode, ShardRouting shardRouting) {
         initializeUnassignedShard(allocation, routingNodes, routingNode, shardRouting, null, null);
     }
 
@@ -205,14 +206,15 @@ public abstract class AbstractAllocateAllocationCommand implements AllocationCom
                                              @Nullable RecoverySource recoverySource) {
         for (RoutingNodes.UnassignedShards.UnassignedIterator it = routingNodes.unassigned().iterator(); it.hasNext(); ) {
             ShardRouting unassigned = it.next();
-            if (!unassigned.equalsIgnoringMetaData(shardRouting)) {
+            if (!unassigned.equalsIgnoringMetadata(shardRouting)) {
                 continue;
             }
             if (unassignedInfo != null || recoverySource != null) {
                 unassigned = it.updateUnassigned(unassignedInfo != null ? unassignedInfo : unassigned.unassignedInfo(),
                     recoverySource != null ? recoverySource : unassigned.recoverySource(), allocation.changes());
             }
-            it.initialize(routingNode.nodeId(), null, allocation.clusterInfo().getShardSize(unassigned, ShardRouting.UNAVAILABLE_EXPECTED_SHARD_SIZE), allocation.changes());
+            it.initialize(routingNode.nodeId(), null,
+                allocation.clusterInfo().getShardSize(unassigned, ShardRouting.UNAVAILABLE_EXPECTED_SHARD_SIZE), allocation.changes());
             return;
         }
         assert false : "shard to initialize not found in list of unassigned shards";

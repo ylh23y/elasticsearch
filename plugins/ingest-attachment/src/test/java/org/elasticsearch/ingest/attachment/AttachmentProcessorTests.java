@@ -27,7 +27,6 @@ import org.elasticsearch.ingest.RandomDocumentPicks;
 import org.elasticsearch.test.ESTestCase;
 import org.junit.Before;
 
-import java.io.IOException;
 import java.io.InputStream;
 import java.util.ArrayList;
 import java.util.Base64;
@@ -215,6 +214,12 @@ public class AttachmentProcessorTests extends ESTestCase {
         assertThat(attachmentData.get("content_type").toString(), containsString("text/plain"));
     }
 
+    // See (https://issues.apache.org/jira/browse/COMPRESS-432) for information
+    // about the issue that causes a zip file to hang in Tika versions prior to 1.18.
+    public void testZipFileDoesNotHang() throws Exception {
+        parseDocument("bad_tika.zip", processor);
+    }
+
     public void testParseAsBytesArray() throws Exception {
         String path = "/org/elasticsearch/ingest/attachment/test/sample-files/text-in-english.txt";
         byte[] bytes;
@@ -279,7 +284,7 @@ public class AttachmentProcessorTests extends ESTestCase {
     private Map<String, Object> parseDocument(String file, AttachmentProcessor processor, Map<String, Object> optionalFields)
         throws Exception {
         Map<String, Object> document = new HashMap<>();
-        document.put("source_field", getAsBase64(file));
+        document.put("source_field", getAsBinaryOrBase64(file));
         document.putAll(optionalFields);
 
         IngestDocument ingestDocument = RandomDocumentPicks.randomIngestDocument(random(), document);
@@ -330,11 +335,16 @@ public class AttachmentProcessorTests extends ESTestCase {
         assertThat(attachmentData.get("content_length"), is(56L));
     }
 
-    private String getAsBase64(String filename) throws Exception {
+    private Object getAsBinaryOrBase64(String filename) throws Exception {
         String path = "/org/elasticsearch/ingest/attachment/test/sample-files/" + filename;
         try (InputStream is = AttachmentProcessorTests.class.getResourceAsStream(path)) {
             byte bytes[] = IOUtils.toByteArray(is);
-            return Base64.getEncoder().encodeToString(bytes);
+            // behave like CBOR from time to time
+            if (rarely()) {
+                return bytes;
+            } else {
+                return Base64.getEncoder().encodeToString(bytes);
+            }
         }
     }
 }

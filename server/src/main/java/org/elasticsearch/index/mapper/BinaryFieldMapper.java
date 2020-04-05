@@ -20,7 +20,6 @@
 package org.elasticsearch.index.mapper;
 
 import com.carrotsearch.hppc.ObjectArrayList;
-
 import org.apache.lucene.document.Field;
 import org.apache.lucene.index.IndexOptions;
 import org.apache.lucene.index.IndexableField;
@@ -40,8 +39,12 @@ import org.elasticsearch.index.fielddata.IndexFieldData;
 import org.elasticsearch.index.fielddata.plain.BytesBinaryDVIndexFieldData;
 import org.elasticsearch.index.query.QueryShardContext;
 import org.elasticsearch.index.query.QueryShardException;
+import org.elasticsearch.search.DocValueFormat;
+import org.elasticsearch.search.aggregations.support.CoreValuesSourceType;
+import org.elasticsearch.search.aggregations.support.ValuesSourceType;
 
 import java.io.IOException;
+import java.time.ZoneId;
 import java.util.Base64;
 import java.util.List;
 import java.util.Map;
@@ -78,7 +81,8 @@ public class BinaryFieldMapper extends FieldMapper {
 
     public static class TypeParser implements Mapper.TypeParser {
         @Override
-        public Mapper.Builder parse(String name, Map<String, Object> node, ParserContext parserContext) throws MapperParsingException {
+        public BinaryFieldMapper.Builder parse(String name, Map<String, Object> node, ParserContext parserContext)
+                throws MapperParsingException {
             BinaryFieldMapper.Builder builder = new BinaryFieldMapper.Builder(name);
             parseField(builder, name, node, parserContext);
             return builder;
@@ -104,6 +108,10 @@ public class BinaryFieldMapper extends FieldMapper {
             return CONTENT_TYPE;
         }
 
+        @Override
+        public DocValueFormat docValueFormat(String format, ZoneId timeZone) {
+            return DocValueFormat.BINARY;
+        }
 
         @Override
         public BytesReference valueForDisplay(Object value) {
@@ -128,6 +136,11 @@ public class BinaryFieldMapper extends FieldMapper {
         public IndexFieldData.Builder fielddataBuilder(String fullyQualifiedIndexName) {
             failIfNoDocValues();
             return new BytesBinaryDVIndexFieldData.Builder();
+        }
+
+        @Override
+        public ValuesSourceType getValuesSourceType() {
+            return CoreValuesSourceType.BYTES;
         }
 
         @Override

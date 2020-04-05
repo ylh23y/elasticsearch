@@ -22,10 +22,9 @@ import org.elasticsearch.common.io.stream.StreamInput;
 import org.elasticsearch.common.io.stream.StreamOutput;
 import org.elasticsearch.common.xcontent.XContentBuilder;
 import org.elasticsearch.search.DocValueFormat;
+import org.elasticsearch.search.aggregations.BucketOrder;
 import org.elasticsearch.search.aggregations.InternalAggregation;
 import org.elasticsearch.search.aggregations.InternalAggregations;
-import org.elasticsearch.search.aggregations.pipeline.PipelineAggregator;
-import org.elasticsearch.search.aggregations.BucketOrder;
 
 import java.io.IOException;
 import java.util.Collections;
@@ -51,9 +50,8 @@ public class UnmappedTerms extends InternalTerms<UnmappedTerms, UnmappedTerms.Bu
         }
     }
 
-    public UnmappedTerms(String name, BucketOrder order, int requiredSize, long minDocCount,
-            List<PipelineAggregator> pipelineAggregators, Map<String, Object> metaData) {
-        super(name, order, requiredSize, minDocCount, pipelineAggregators, metaData);
+    public UnmappedTerms(String name, BucketOrder order, int requiredSize, long minDocCount, Map<String, Object> metadata) {
+        super(name, order, requiredSize, minDocCount, metadata);
     }
 
     /**
@@ -80,11 +78,16 @@ public class UnmappedTerms extends InternalTerms<UnmappedTerms, UnmappedTerms.Bu
 
     @Override
     public UnmappedTerms create(List<Bucket> buckets) {
-        return new UnmappedTerms(name, order, requiredSize, minDocCount, pipelineAggregators(), metaData);
+        return new UnmappedTerms(name, order, requiredSize, minDocCount, metadata);
     }
 
     @Override
     public Bucket createBucket(InternalAggregations aggregations, Bucket prototype) {
+        throw new UnsupportedOperationException("not supported for UnmappedTerms");
+    }
+
+    @Override
+    Bucket createBucket(long docCount, InternalAggregations aggs, long docCountError, Bucket prototype) {
         throw new UnsupportedOperationException("not supported for UnmappedTerms");
     }
 
@@ -94,13 +97,13 @@ public class UnmappedTerms extends InternalTerms<UnmappedTerms, UnmappedTerms.Bu
     }
 
     @Override
-    public InternalAggregation doReduce(List<InternalAggregation> aggregations, ReduceContext reduceContext) {
-        for (InternalAggregation agg : aggregations) {
-            if (!(agg instanceof UnmappedTerms)) {
-                return agg.reduce(aggregations, reduceContext);
-            }
-        }
-        return this;
+    public InternalAggregation reduce(List<InternalAggregation> aggregations, ReduceContext reduceContext) {
+        return new UnmappedTerms(name, order, requiredSize, minDocCount, metadata);
+    }
+
+    @Override
+    public boolean isMapped() {
+        return false;
     }
 
     @Override

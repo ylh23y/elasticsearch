@@ -5,26 +5,15 @@
  */
 package org.elasticsearch.xpack.core.graph.action;
 
-import org.elasticsearch.action.Action;
-import org.elasticsearch.client.ElasticsearchClient;
+import org.elasticsearch.action.ActionType;
+import org.elasticsearch.protocol.xpack.graph.GraphExploreResponse;
 
-public class GraphExploreAction extends Action<GraphExploreRequest, GraphExploreResponse, 
-    GraphExploreRequestBuilder> {
+public class GraphExploreAction extends ActionType<GraphExploreResponse> {
 
     public static final GraphExploreAction INSTANCE = new GraphExploreAction();
     public static final String NAME = "indices:data/read/xpack/graph/explore";
 
     private GraphExploreAction() {
-        super(NAME);
-    }
-
-    @Override
-    public GraphExploreResponse newResponse() {
-        return new GraphExploreResponse();
-    }
-
-    @Override
-    public GraphExploreRequestBuilder newRequestBuilder(ElasticsearchClient client) {
-        return new GraphExploreRequestBuilder(client, this);
+        super(NAME, GraphExploreResponse::new);
     }
 }

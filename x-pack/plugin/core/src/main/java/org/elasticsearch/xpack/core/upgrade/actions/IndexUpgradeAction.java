@@ -5,9 +5,9 @@
  */
 package org.elasticsearch.xpack.core.upgrade.actions;
 
-import org.elasticsearch.action.Action;
 import org.elasticsearch.action.ActionRequestValidationException;
 import org.elasticsearch.action.IndicesRequest;
+import org.elasticsearch.action.ActionType;
 import org.elasticsearch.action.support.IndicesOptions;
 import org.elasticsearch.action.support.master.MasterNodeReadOperationRequestBuilder;
 import org.elasticsearch.action.support.master.MasterNodeReadRequest;
@@ -26,24 +26,13 @@ import java.util.Objects;
 import static org.elasticsearch.action.ValidateActions.addValidationError;
 import static org.elasticsearch.xpack.core.upgrade.IndexUpgradeServiceFields.UPGRADE_INDEX_OPTIONS;
 
-public class IndexUpgradeAction extends Action<IndexUpgradeAction.Request, BulkByScrollResponse,
-        IndexUpgradeAction.RequestBuilder> {
+public class IndexUpgradeAction extends ActionType<BulkByScrollResponse> {
 
     public static final IndexUpgradeAction INSTANCE = new IndexUpgradeAction();
     public static final String NAME = "cluster:admin/xpack/upgrade";
 
     private IndexUpgradeAction() {
-        super(NAME);
-    }
-
-    @Override
-    public RequestBuilder newRequestBuilder(ElasticsearchClient client) {
-        return new RequestBuilder(client, this);
-    }
-
-    @Override
-    public BulkByScrollResponse newResponse() {
-        return new BulkByScrollResponse();
+        super(NAME, BulkByScrollResponse::new);
     }
 
     public static class Request extends MasterNodeReadRequest<Request> implements IndicesRequest {
@@ -82,7 +71,6 @@ public class IndexUpgradeAction extends Action<IndexUpgradeAction.Request, BulkB
         /**
          * Sets the index.
          */
-        @SuppressWarnings("unchecked")
         public final Request index(String index) {
             this.index = index;
             return this;
@@ -121,11 +109,6 @@ public class IndexUpgradeAction extends Action<IndexUpgradeAction.Request, BulkB
         }
 
         @Override
-        public void readFrom(StreamInput in) throws IOException {
-            throw new UnsupportedOperationException("usage of Streamable is to be replaced by Writeable");
-        }
-
-        @Override
         public boolean equals(Object o) {
             if (this == o) return true;
             if (o == null || getClass() != o.getClass()) return false;
@@ -151,8 +134,8 @@ public class IndexUpgradeAction extends Action<IndexUpgradeAction.Request, BulkB
 
     public static class RequestBuilder extends MasterNodeReadOperationRequestBuilder<Request, BulkByScrollResponse, RequestBuilder> {
 
-        protected RequestBuilder(ElasticsearchClient client, IndexUpgradeAction action) {
-            super(client, action, new Request());
+        public RequestBuilder(ElasticsearchClient client) {
+            super(client, INSTANCE, new Request());
         }
 
         public RequestBuilder setIndex(String index) {

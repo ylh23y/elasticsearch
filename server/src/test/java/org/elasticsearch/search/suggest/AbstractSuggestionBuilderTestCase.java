@@ -21,10 +21,11 @@ package org.elasticsearch.search.suggest;
 
 import org.apache.lucene.analysis.core.SimpleAnalyzer;
 import org.elasticsearch.Version;
-import org.elasticsearch.cluster.metadata.IndexMetaData;
+import org.elasticsearch.cluster.metadata.IndexMetadata;
 import org.elasticsearch.common.io.stream.NamedWriteableRegistry;
 import org.elasticsearch.common.io.stream.Writeable;
 import org.elasticsearch.common.settings.Settings;
+import org.elasticsearch.common.util.BigArrays;
 import org.elasticsearch.common.xcontent.NamedXContentRegistry;
 import org.elasticsearch.common.xcontent.ToXContent;
 import org.elasticsearch.common.xcontent.XContentBuilder;
@@ -69,7 +70,7 @@ public abstract class AbstractSuggestionBuilderTestCase<SB extends SuggestionBui
      */
     @BeforeClass
     public static void init() {
-        SearchModule searchModule = new SearchModule(Settings.EMPTY, false, emptyList());
+        SearchModule searchModule = new SearchModule(Settings.EMPTY, emptyList());
         namedWriteableRegistry = new NamedWriteableRegistry(searchModule.getNamedWriteables());
         xContentRegistry = new NamedXContentRegistry(searchModule.getNamedXContents());
     }
@@ -140,26 +141,27 @@ public abstract class AbstractSuggestionBuilderTestCase<SB extends SuggestionBui
             xContentBuilder.endObject();
 
             XContentBuilder shuffled = shuffleXContent(xContentBuilder, shuffleProtectedFields());
-            XContentParser parser = createParser(shuffled);
-            // we need to skip the start object and the name, those will be parsed by outer SuggestBuilder
-            parser.nextToken();
+            try (XContentParser parser = createParser(shuffled)) {
+                // we need to skip the start object and the name, those will be parsed by outer SuggestBuilder
+                parser.nextToken();
 
-            SuggestionBuilder<?> secondSuggestionBuilder = SuggestionBuilder.fromXContent(parser);
-            assertNotSame(suggestionBuilder, secondSuggestionBuilder);
-            assertEquals(suggestionBuilder, secondSuggestionBuilder);
-            assertEquals(suggestionBuilder.hashCode(), secondSuggestionBuilder.hashCode());
+                SuggestionBuilder<?> secondSuggestionBuilder = SuggestionBuilder.fromXContent(parser);
+                assertNotSame(suggestionBuilder, secondSuggestionBuilder);
+                assertEquals(suggestionBuilder, secondSuggestionBuilder);
+                assertEquals(suggestionBuilder.hashCode(), secondSuggestionBuilder.hashCode());
+            }
         }
     }
 
     public void testBuild() throws IOException {
         for (int runs = 0; runs < NUMBER_OF_TESTBUILDERS; runs++) {
             SB suggestionBuilder = randomTestBuilder();
-            Settings indexSettings = Settings.builder().put(IndexMetaData.SETTING_VERSION_CREATED, Version.CURRENT).build();
+            Settings indexSettings = Settings.builder().put(IndexMetadata.SETTING_VERSION_CREATED, Version.CURRENT).build();
             IndexSettings idxSettings = IndexSettingsModule.newIndexSettings(new Index(randomAlphaOfLengthBetween(1, 10), "_na_"),
                     indexSettings);
             MapperService mapperService = mock(MapperService.class);
             ScriptService scriptService = mock(ScriptService.class);
-            MappedFieldType fieldType = mockFieldType();
+            MappedFieldType fieldType = mockFieldType(suggestionBuilder.field());
             boolean fieldTypeSearchAnalyzerSet = randomBoolean();
             if (fieldTypeSearchAnalyzerSet) {
                 NamedAnalyzer searchAnalyzer = new NamedAnalyzer("fieldSearchAnalyzer", AnalyzerScope.INDEX, new SimpleAnalyzer());
@@ -172,13 +174,14 @@ public abstract class AbstractSuggestionBuilderTestCase<SB extends SuggestionBui
                 when(mapperService.searchAnalyzer())
                         .thenReturn(new NamedAnalyzer("mapperServiceSearchAnalyzer", AnalyzerScope.INDEX, new SimpleAnalyzer()));
             }
-            when(mapperService.fullName(any(String.class))).thenReturn(fieldType);
+            when(mapperService.fieldType(any(String.class))).thenReturn(fieldType);
             when(mapperService.getNamedAnalyzer(any(String.class))).then(
                     invocation -> new NamedAnalyzer((String) invocation.getArguments()[0], AnalyzerScope.INDEX, new SimpleAnalyzer()));
             when(scriptService.compile(any(Script.class), any())).then(invocation -> new TestTemplateService.MockTemplateScript.Factory(
                     ((Script) invocation.getArguments()[0]).getIdOrCode()));
-            QueryShardContext mockShardContext = new QueryShardContext(0, idxSettings, null, null, mapperService, null, scriptService,
-                    xContentRegistry(), namedWriteableRegistry, null, null, System::currentTimeMillis, null);
+            QueryShardContext mockShardContext = new QueryShardContext(0, idxSettings, BigArrays.NON_RECYCLING_INSTANCE, null,
+                null, mapperService, null, scriptService, xContentRegistry(), namedWriteableRegistry, null, null,
+                    System::currentTimeMillis, null, null, () -> true, null);
 
             SuggestionContext suggestionContext = suggestionBuilder.build(mockShardContext);
             assertEquals(toBytesRef(suggestionBuilder.text()), suggestionContext.getText());
@@ -210,8 +213,10 @@ public abstract class AbstractSuggestionBuilderTestCase<SB extends SuggestionBui
      */
     protected abstract void assertSuggestionContext(SB builder, SuggestionContext context) throws IOException;
 
-    protected MappedFieldType mockFieldType() {
-        return mock(MappedFieldType.class);
+    protected MappedFieldType mockFieldType(String fieldName) {
+        MappedFieldType fieldType = mock(MappedFieldType.class);
+        when(fieldType.name()).thenReturn(fieldName);
+        return fieldType;
     }
 
     /**

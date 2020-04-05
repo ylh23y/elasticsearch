@@ -9,7 +9,7 @@ import org.elasticsearch.Version;
 import org.elasticsearch.cluster.ClusterName;
 import org.elasticsearch.cluster.ClusterState;
 import org.elasticsearch.cluster.block.ClusterBlocks;
-import org.elasticsearch.cluster.metadata.MetaData;
+import org.elasticsearch.cluster.metadata.Metadata;
 import org.elasticsearch.cluster.node.DiscoveryNode;
 import org.elasticsearch.cluster.node.DiscoveryNodes;
 import org.elasticsearch.cluster.service.ClusterService;
@@ -18,14 +18,16 @@ import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.env.Environment;
 import org.elasticsearch.test.ESTestCase;
 import org.elasticsearch.watcher.ResourceWatcherService;
+import org.elasticsearch.xpack.core.XPackPlugin;
 import org.elasticsearch.xpack.core.watcher.watch.ClockMock;
 import org.junit.After;
 import org.junit.Before;
 
 import java.nio.file.Path;
+import java.util.Arrays;
 
-import static java.util.Collections.emptyMap;
 import static java.util.Collections.emptySet;
+import static java.util.Collections.singletonMap;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
@@ -61,12 +63,14 @@ public abstract class AbstractLicenseServiceTestCase extends ESTestCase {
         ClusterState state = mock(ClusterState.class);
         final ClusterBlocks noBlock = ClusterBlocks.builder().build();
         when(state.blocks()).thenReturn(noBlock);
-        MetaData metaData = mock(MetaData.class);
-        when(metaData.custom(LicensesMetaData.TYPE)).thenReturn(new LicensesMetaData(license, null));
-        when(state.metaData()).thenReturn(metaData);
+        Metadata metadata = mock(Metadata.class);
+        when(metadata.custom(LicensesMetadata.TYPE)).thenReturn(new LicensesMetadata(license, null));
+        when(state.metadata()).thenReturn(metadata);
         final DiscoveryNode mockNode = getLocalNode();
         when(discoveryNodes.getMasterNode()).thenReturn(mockNode);
+        when(discoveryNodes.spliterator()).thenReturn(Arrays.asList(mockNode).spliterator());
         when(discoveryNodes.isLocalNodeElectedMaster()).thenReturn(false);
+        when(discoveryNodes.getMinNodeVersion()).thenReturn(mockNode.getVersion());
         when(state.nodes()).thenReturn(discoveryNodes);
         when(state.getNodes()).thenReturn(discoveryNodes); // it is really ridiculous we have nodes() and getNodes()...
         when(clusterService.state()).thenReturn(state);
@@ -76,7 +80,8 @@ public abstract class AbstractLicenseServiceTestCase extends ESTestCase {
     }
 
     protected DiscoveryNode getLocalNode() {
-        return new DiscoveryNode("b", buildNewFakeTransportAddress(), emptyMap(), emptySet(), Version.CURRENT);
+        return new DiscoveryNode("b", buildNewFakeTransportAddress(), singletonMap(XPackPlugin.XPACK_INSTALLED_NODE_ATTR, "true"),
+            emptySet(), Version.CURRENT);
     }
 
     @After

@@ -5,10 +5,13 @@
  */
 package org.elasticsearch.xpack.watcher.transport.actions.service;
 
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 import org.apache.logging.log4j.message.ParameterizedMessage;
 import org.elasticsearch.action.ActionListener;
 import org.elasticsearch.action.support.ActionFilters;
 import org.elasticsearch.action.support.master.AcknowledgedRequest;
+import org.elasticsearch.action.support.master.AcknowledgedResponse;
 import org.elasticsearch.action.support.master.TransportMasterNodeAction;
 import org.elasticsearch.cluster.AckedClusterStateUpdateTask;
 import org.elasticsearch.cluster.ClusterState;
@@ -16,19 +19,24 @@ import org.elasticsearch.cluster.ack.AckedRequest;
 import org.elasticsearch.cluster.block.ClusterBlockException;
 import org.elasticsearch.cluster.block.ClusterBlockLevel;
 import org.elasticsearch.cluster.metadata.IndexNameExpressionResolver;
-import org.elasticsearch.cluster.metadata.MetaData;
+import org.elasticsearch.cluster.metadata.Metadata;
 import org.elasticsearch.cluster.service.ClusterService;
 import org.elasticsearch.common.inject.Inject;
-import org.elasticsearch.common.settings.Settings;
+import org.elasticsearch.common.io.stream.StreamInput;
 import org.elasticsearch.common.unit.TimeValue;
+import org.elasticsearch.tasks.Task;
 import org.elasticsearch.threadpool.ThreadPool;
 import org.elasticsearch.transport.TransportService;
-import org.elasticsearch.xpack.core.watcher.WatcherMetaData;
+import org.elasticsearch.xpack.core.XPackPlugin;
+import org.elasticsearch.xpack.core.watcher.WatcherMetadata;
 import org.elasticsearch.xpack.core.watcher.transport.actions.service.WatcherServiceAction;
 import org.elasticsearch.xpack.core.watcher.transport.actions.service.WatcherServiceRequest;
-import org.elasticsearch.xpack.core.watcher.transport.actions.service.WatcherServiceResponse;
 
-public class TransportWatcherServiceAction extends TransportMasterNodeAction<WatcherServiceRequest, WatcherServiceResponse> {
+import java.io.IOException;
+
+public class TransportWatcherServiceAction extends TransportMasterNodeAction<WatcherServiceRequest, AcknowledgedResponse> {
+
+    private static final Logger logger = LogManager.getLogger(TransportWatcherServiceAction.class);
 
     private AckedRequest ackedRequest = new AckedRequest() {
         @Override
@@ -43,11 +51,11 @@ public class TransportWatcherServiceAction extends TransportMasterNodeAction<Wat
     };
 
     @Inject
-    public TransportWatcherServiceAction(Settings settings, TransportService transportService, ClusterService clusterService,
+    public TransportWatcherServiceAction(TransportService transportService, ClusterService clusterService,
                                          ThreadPool threadPool, ActionFilters actionFilters,
                                          IndexNameExpressionResolver indexNameExpressionResolver) {
-        super(settings, WatcherServiceAction.NAME, transportService, clusterService, threadPool, actionFilters,
-                indexNameExpressionResolver, WatcherServiceRequest::new);
+        super(WatcherServiceAction.NAME, transportService, clusterService, threadPool, actionFilters,
+            WatcherServiceRequest::new, indexNameExpressionResolver);
     }
 
     @Override
@@ -56,46 +64,48 @@ public class TransportWatcherServiceAction extends TransportMasterNodeAction<Wat
     }
 
     @Override
-    protected WatcherServiceResponse newResponse() {
-        return new WatcherServiceResponse();
+    protected AcknowledgedResponse read(StreamInput in) throws IOException {
+        return new AcknowledgedResponse(in);
     }
 
     @Override
-    protected void masterOperation(WatcherServiceRequest request, ClusterState state,
-                                   ActionListener<WatcherServiceResponse> listener) {
+    protected void masterOperation(Task task, WatcherServiceRequest request, ClusterState state,
+                                   ActionListener<AcknowledgedResponse> listener) {
         switch (request.getCommand()) {
             case STOP:
-                setWatcherMetaDataAndWait(true, listener);
+                setWatcherMetadataAndWait(true, listener);
                 break;
             case START:
-                setWatcherMetaDataAndWait(false, listener);
+                setWatcherMetadataAndWait(false, listener);
                 break;
         }
     }
 
-    private void setWatcherMetaDataAndWait(boolean manuallyStopped, final ActionListener<WatcherServiceResponse> listener) {
+    private void setWatcherMetadataAndWait(boolean manuallyStopped, final ActionListener<AcknowledgedResponse> listener) {
         String source = manuallyStopped ? "update_watcher_manually_stopped" : "update_watcher_manually_started";
 
         clusterService.submitStateUpdateTask(source,
-                new AckedClusterStateUpdateTask<WatcherServiceResponse>(ackedRequest, listener) {
+                new AckedClusterStateUpdateTask<AcknowledgedResponse>(ackedRequest, listener) {
 
                     @Override
-                    protected WatcherServiceResponse newResponse(boolean acknowledged) {
-                        return new WatcherServiceResponse(acknowledged);
+                    protected AcknowledgedResponse newResponse(boolean acknowledged) {
+                        return new AcknowledgedResponse(acknowledged);
                     }
 
                     @Override
                     public ClusterState execute(ClusterState clusterState) {
-                        WatcherMetaData newWatcherMetaData = new WatcherMetaData(manuallyStopped);
-                        WatcherMetaData currentMetaData = clusterState.metaData().custom(WatcherMetaData.TYPE);
+                        XPackPlugin.checkReadyForXPackCustomMetadata(clusterState);
+
+                        WatcherMetadata newWatcherMetadata = new WatcherMetadata(manuallyStopped);
+                        WatcherMetadata currentMetadata = clusterState.metadata().custom(WatcherMetadata.TYPE);
 
                         // adhere to the contract of returning the original state if nothing has changed
-                        if (newWatcherMetaData.equals(currentMetaData)) {
+                        if (newWatcherMetadata.equals(currentMetadata)) {
                             return clusterState;
                         } else {
                             ClusterState.Builder builder = new ClusterState.Builder(clusterState);
-                            builder.metaData(MetaData.builder(clusterState.getMetaData())
-                                    .putCustom(WatcherMetaData.TYPE, newWatcherMetaData));
+                            builder.metadata(Metadata.builder(clusterState.getMetadata())
+                                    .putCustom(WatcherMetadata.TYPE, newWatcherMetadata));
                             return builder.build();
                         }
                     }

@@ -30,7 +30,7 @@ import org.apache.lucene.search.Query;
 import org.apache.lucene.search.TermQuery;
 import org.apache.lucene.util.LuceneTestCase;
 import org.elasticsearch.Version;
-import org.elasticsearch.cluster.metadata.IndexMetaData;
+import org.elasticsearch.cluster.metadata.IndexMetadata;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.index.analysis.AnalyzerScope;
 import org.elasticsearch.index.analysis.NamedAnalyzer;
@@ -39,6 +39,7 @@ import org.elasticsearch.index.query.QueryShardContext;
 import java.io.IOException;
 import java.io.StringReader;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.List;
 
 public class DocumentFieldMapperTests extends LuceneTestCase {
@@ -105,7 +106,7 @@ public class DocumentFieldMapperTests extends LuceneTestCase {
 
     static class FakeFieldMapper extends FieldMapper {
 
-        private static final Settings SETTINGS = Settings.builder().put(IndexMetaData.SETTING_VERSION_CREATED, Version.CURRENT).build();
+        private static final Settings SETTINGS = Settings.builder().put(IndexMetadata.SETTING_VERSION_CREATED, Version.CURRENT).build();
 
         FakeFieldMapper(String simpleName, MappedFieldType fieldType) {
             super(simpleName, fieldType.clone(), fieldType.clone(), SETTINGS, MultiFields.empty(), CopyTo.empty());
@@ -138,15 +139,16 @@ public class DocumentFieldMapperTests extends LuceneTestCase {
         Analyzer defaultSearch = new FakeAnalyzer("default_search");
         Analyzer defaultSearchQuote = new FakeAnalyzer("default_search_quote");
 
-        DocumentFieldMappers documentFieldMappers = new DocumentFieldMappers(Arrays.asList(fieldMapper1, fieldMapper2), defaultIndex, defaultSearch, defaultSearchQuote);
+        DocumentFieldMappers documentFieldMappers = new DocumentFieldMappers(
+            Arrays.asList(fieldMapper1, fieldMapper2),
+            Collections.emptyList(),
+            defaultIndex,
+            defaultSearch,
+            defaultSearchQuote);
 
         assertAnalyzes(documentFieldMappers.indexAnalyzer(), "field1", "index");
-        assertAnalyzes(documentFieldMappers.searchAnalyzer(), "field1", "search");
-        assertAnalyzes(documentFieldMappers.searchQuoteAnalyzer(), "field1", "search_quote");
 
         assertAnalyzes(documentFieldMappers.indexAnalyzer(), "field2", "default_index");
-        assertAnalyzes(documentFieldMappers.searchAnalyzer(), "field2", "default_search");
-        assertAnalyzes(documentFieldMappers.searchQuoteAnalyzer(), "field2", "default_search_quote");
     }
 
     private void assertAnalyzes(Analyzer analyzer, String field, String output) throws IOException {

@@ -5,16 +5,14 @@
  */
 package org.elasticsearch.xpack.core.ml.action;
 
-import org.elasticsearch.Version;
-import org.elasticsearch.action.Action;
+import org.elasticsearch.ElasticsearchException;
+import org.elasticsearch.action.ActionType;
 import org.elasticsearch.action.ActionRequestBuilder;
 import org.elasticsearch.action.ActionRequestValidationException;
-import org.elasticsearch.action.FailedNodeException;
 import org.elasticsearch.action.TaskOperationFailure;
 import org.elasticsearch.action.support.tasks.BaseTasksRequest;
 import org.elasticsearch.action.support.tasks.BaseTasksResponse;
 import org.elasticsearch.client.ElasticsearchClient;
-import org.elasticsearch.cluster.metadata.MetaData;
 import org.elasticsearch.cluster.node.DiscoveryNode;
 import org.elasticsearch.common.Nullable;
 import org.elasticsearch.common.ParseField;
@@ -26,12 +24,15 @@ import org.elasticsearch.common.unit.TimeValue;
 import org.elasticsearch.common.xcontent.ToXContentObject;
 import org.elasticsearch.common.xcontent.XContentBuilder;
 import org.elasticsearch.tasks.Task;
-import org.elasticsearch.xpack.core.ml.action.util.QueryPage;
+import org.elasticsearch.xpack.core.action.util.QueryPage;
 import org.elasticsearch.xpack.core.ml.job.config.Job;
 import org.elasticsearch.xpack.core.ml.job.config.JobState;
 import org.elasticsearch.xpack.core.ml.job.process.autodetect.state.DataCounts;
 import org.elasticsearch.xpack.core.ml.job.process.autodetect.state.ModelSizeStats;
+import org.elasticsearch.xpack.core.ml.job.process.autodetect.state.TimingStats;
+import org.elasticsearch.xpack.core.ml.stats.ForecastStats;
 import org.elasticsearch.xpack.core.ml.utils.ExceptionsHelper;
+import org.elasticsearch.xpack.core.ml.utils.ToXContentParams;
 
 import java.io.IOException;
 import java.util.Collections;
@@ -39,28 +40,24 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 
-public class GetJobsStatsAction extends Action<GetJobsStatsAction.Request, GetJobsStatsAction.Response, GetJobsStatsAction.RequestBuilder> {
+import static org.elasticsearch.Version.V_7_3_0;
+
+public class GetJobsStatsAction extends ActionType<GetJobsStatsAction.Response> {
 
     public static final GetJobsStatsAction INSTANCE = new GetJobsStatsAction();
     public static final String NAME = "cluster:monitor/xpack/ml/job/stats/get";
 
     private static final String DATA_COUNTS = "data_counts";
     private static final String MODEL_SIZE_STATS = "model_size_stats";
+    private static final String FORECASTS_STATS = "forecasts_stats";
     private static final String STATE = "state";
     private static final String NODE = "node";
+    private static final String ASSIGNMENT_EXPLANATION = "assignment_explanation";
+    private static final String OPEN_TIME = "open_time";
+    private static final String TIMING_STATS = "timing_stats";
 
     private GetJobsStatsAction() {
-        super(NAME);
-    }
-
-    @Override
-    public RequestBuilder newRequestBuilder(ElasticsearchClient client) {
-        return new RequestBuilder(client, this);
-    }
-
-    @Override
-    public Response newResponse() {
-        return new Response();
+        super(NAME, GetJobsStatsAction.Response::new);
     }
 
     public static class Request extends BaseTasksRequest<Request> {
@@ -80,6 +77,21 @@ public class GetJobsStatsAction extends Action<GetJobsStatsAction.Request, GetJo
 
         public Request() {}
 
+        public Request(StreamInput in) throws IOException {
+            super(in);
+            jobId = in.readString();
+            expandedJobsIds = in.readStringList();
+            allowNoJobs = in.readBoolean();
+        }
+
+        @Override
+        public void writeTo(StreamOutput out) throws IOException {
+            super.writeTo(out);
+            out.writeString(jobId);
+            out.writeStringCollection(expandedJobsIds);
+            out.writeBoolean(allowNoJobs);
+        }
+
         public List<String> getExpandedJobsIds() { return expandedJobsIds; }
 
         public void setExpandedJobsIds(List<String> expandedJobsIds) { this.expandedJobsIds = expandedJobsIds; }
@@ -98,32 +110,12 @@ public class GetJobsStatsAction extends Action<GetJobsStatsAction.Request, GetJo
 
         @Override
         public boolean match(Task task) {
-            return jobId.equals(MetaData.ALL) || OpenJobAction.JobTaskMatcher.match(task, jobId);
+            return expandedJobsIds.stream().anyMatch(jobId -> OpenJobAction.JobTaskMatcher.match(task, jobId));
         }
 
         @Override
         public ActionRequestValidationException validate() {
             return null;
-        }
-
-        @Override
-        public void readFrom(StreamInput in) throws IOException {
-            super.readFrom(in);
-            jobId = in.readString();
-            expandedJobsIds = in.readList(StreamInput::readString);
-            if (in.getVersion().onOrAfter(Version.V_6_1_0)) {
-                allowNoJobs = in.readBoolean();
-            }
-        }
-
-        @Override
-        public void writeTo(StreamOutput out) throws IOException {
-            super.writeTo(out);
-            out.writeString(jobId);
-            out.writeStringList(expandedJobsIds);
-            if (out.getVersion().onOrAfter(Version.V_6_1_0)) {
-                out.writeBoolean(allowNoJobs);
-            }
         }
 
         @Override
@@ -144,7 +136,7 @@ public class GetJobsStatsAction extends Action<GetJobsStatsAction.Request, GetJo
         }
     }
 
-    public static class RequestBuilder extends ActionRequestBuilder<Request, Response, RequestBuilder> {
+    public static class RequestBuilder extends ActionRequestBuilder<Request, Response> {
 
         public RequestBuilder(ElasticsearchClient client, GetJobsStatsAction action) {
             super(client, action, new Request());
@@ -155,26 +147,33 @@ public class GetJobsStatsAction extends Action<GetJobsStatsAction.Request, GetJo
 
         public static class JobStats implements ToXContentObject, Writeable {
             private final String jobId;
-            private DataCounts dataCounts;
+            private final DataCounts dataCounts;
             @Nullable
-            private ModelSizeStats modelSizeStats;
+            private final ModelSizeStats modelSizeStats;
             @Nullable
-            private TimeValue openTime;
-            private JobState state;
+            private final ForecastStats forecastStats;
             @Nullable
-            private DiscoveryNode node;
+            private final TimeValue openTime;
+            private final JobState state;
             @Nullable
-            private String assignmentExplanation;
+            private final DiscoveryNode node;
+            @Nullable
+            private final String assignmentExplanation;
+            @Nullable
+            private final TimingStats timingStats;
 
-            public JobStats(String jobId, DataCounts dataCounts, @Nullable ModelSizeStats modelSizeStats, JobState state,
-                     @Nullable  DiscoveryNode node, @Nullable String assignmentExplanation, @Nullable TimeValue opentime) {
+            public JobStats(String jobId, DataCounts dataCounts, @Nullable ModelSizeStats modelSizeStats,
+                            @Nullable ForecastStats forecastStats, JobState state, @Nullable DiscoveryNode node,
+                            @Nullable String assignmentExplanation, @Nullable TimeValue openTime, @Nullable TimingStats timingStats) {
                 this.jobId = Objects.requireNonNull(jobId);
                 this.dataCounts = Objects.requireNonNull(dataCounts);
                 this.modelSizeStats = modelSizeStats;
+                this.forecastStats = forecastStats;
                 this.state = Objects.requireNonNull(state);
                 this.node = node;
                 this.assignmentExplanation = assignmentExplanation;
-                this.openTime = opentime;
+                this.openTime = openTime;
+                this.timingStats = timingStats;
             }
 
             public JobStats(StreamInput in) throws IOException {
@@ -185,6 +184,12 @@ public class GetJobsStatsAction extends Action<GetJobsStatsAction.Request, GetJo
                 node = in.readOptionalWriteable(DiscoveryNode::new);
                 assignmentExplanation = in.readOptionalString();
                 openTime = in.readOptionalTimeValue();
+                forecastStats = in.readOptionalWriteable(ForecastStats::new);
+                if (in.getVersion().onOrAfter(V_7_3_0)) {
+                    timingStats = in.readOptionalWriteable(TimingStats::new);
+                } else {
+                    timingStats = null;
+                }
             }
 
             public String getJobId() {
@@ -197,6 +202,10 @@ public class GetJobsStatsAction extends Action<GetJobsStatsAction.Request, GetJo
 
             public ModelSizeStats getModelSizeStats() {
                 return modelSizeStats;
+            }
+            
+            public ForecastStats getForecastStats() {
+                return forecastStats;
             }
 
             public JobState getState() {
@@ -215,6 +224,10 @@ public class GetJobsStatsAction extends Action<GetJobsStatsAction.Request, GetJo
                 return openTime;
             }
 
+            public TimingStats getTimingStats() {
+                return timingStats;
+            }
+
             @Override
             public XContentBuilder toXContent(XContentBuilder builder, Params params) throws IOException {
                 // TODO: Have callers wrap the content with an object as they choose rather than forcing it upon them
@@ -231,6 +244,10 @@ public class GetJobsStatsAction extends Action<GetJobsStatsAction.Request, GetJo
                 if (modelSizeStats != null) {
                     builder.field(MODEL_SIZE_STATS, modelSizeStats);
                 }
+                if (forecastStats != null) {
+                    builder.field(FORECASTS_STATS, forecastStats);
+                }
+                
                 builder.field(STATE, state.toString());
                 if (node != null) {
                     builder.startObject(NODE);
@@ -247,10 +264,16 @@ public class GetJobsStatsAction extends Action<GetJobsStatsAction.Request, GetJo
                     builder.endObject();
                 }
                 if (assignmentExplanation != null) {
-                    builder.field("assignment_explanation", assignmentExplanation);
+                    builder.field(ASSIGNMENT_EXPLANATION, assignmentExplanation);
                 }
                 if (openTime != null) {
-                    builder.field("open_time", openTime.getStringRep());
+                    builder.field(OPEN_TIME, openTime.getStringRep());
+                }
+                if (timingStats != null) {
+                    builder.field(
+                        TIMING_STATS,
+                        timingStats,
+                        new MapParams(Collections.singletonMap(ToXContentParams.INCLUDE_CALCULATED_FIELDS, "true")));
                 }
                 return builder;
             }
@@ -264,11 +287,16 @@ public class GetJobsStatsAction extends Action<GetJobsStatsAction.Request, GetJo
                 out.writeOptionalWriteable(node);
                 out.writeOptionalString(assignmentExplanation);
                 out.writeOptionalTimeValue(openTime);
+                out.writeOptionalWriteable(forecastStats);
+                if (out.getVersion().onOrAfter(V_7_3_0)) {
+                    out.writeOptionalWriteable(timingStats);
+                }
             }
 
             @Override
             public int hashCode() {
-                return Objects.hash(jobId, dataCounts, modelSizeStats, state, node, assignmentExplanation, openTime);
+                return Objects.hash(
+                    jobId, dataCounts, modelSizeStats, forecastStats, state, node, assignmentExplanation, openTime, timingStats);
             }
 
             @Override
@@ -280,13 +308,15 @@ public class GetJobsStatsAction extends Action<GetJobsStatsAction.Request, GetJo
                     return false;
                 }
                 JobStats other = (JobStats) obj;
-                return Objects.equals(jobId, other.jobId)
-                        && Objects.equals(this.dataCounts, other.dataCounts)
-                        && Objects.equals(this.modelSizeStats, other.modelSizeStats)
-                        && Objects.equals(this.state, other.state)
-                        && Objects.equals(this.node, other.node)
-                        && Objects.equals(this.assignmentExplanation, other.assignmentExplanation)
-                        && Objects.equals(this.openTime, other.openTime);
+                return Objects.equals(this.jobId, other.jobId)
+                    && Objects.equals(this.dataCounts, other.dataCounts)
+                    && Objects.equals(this.modelSizeStats, other.modelSizeStats)
+                    && Objects.equals(this.forecastStats, other.forecastStats)
+                    && Objects.equals(this.state, other.state)
+                    && Objects.equals(this.node, other.node)
+                    && Objects.equals(this.assignmentExplanation, other.assignmentExplanation)
+                    && Objects.equals(this.openTime, other.openTime)
+                    && Objects.equals(this.timingStats, other.timingStats);
             }
         }
 
@@ -297,23 +327,14 @@ public class GetJobsStatsAction extends Action<GetJobsStatsAction.Request, GetJo
             this.jobsStats = jobsStats;
         }
 
-        public Response(List<TaskOperationFailure> taskFailures, List<? extends FailedNodeException> nodeFailures,
+        public Response(List<TaskOperationFailure> taskFailures, List<? extends ElasticsearchException> nodeFailures,
                  QueryPage<JobStats> jobsStats) {
             super(taskFailures, nodeFailures);
             this.jobsStats = jobsStats;
         }
 
-        public Response() {
-            super(Collections.emptyList(), Collections.emptyList());
-        }
-
-        public QueryPage<JobStats> getResponse() {
-            return jobsStats;
-        }
-
-        @Override
-        public void readFrom(StreamInput in) throws IOException {
-            super.readFrom(in);
+        public Response(StreamInput in) throws IOException {
+            super(in);
             jobsStats = new QueryPage<>(in, JobStats::new);
         }
 
@@ -323,9 +344,13 @@ public class GetJobsStatsAction extends Action<GetJobsStatsAction.Request, GetJo
             jobsStats.writeTo(out);
         }
 
+        public QueryPage<JobStats> getResponse() {
+            return jobsStats;
+        }
+
         @Override
         public XContentBuilder toXContent(XContentBuilder builder, Params params) throws IOException {
-            builder.startObject();;
+            builder.startObject();
             jobsStats.doXContentBody(builder, params);
             builder.endObject();
             return builder;

@@ -110,7 +110,7 @@ public class UsersTool extends LoggingAwareMultiCommand {
                 throw new UserException(ExitCodes.DATA_ERROR, "Invalid username [" + username + "]... " + validationError);
             }
 
-            char[] password = parsePassword(terminal, passwordOption.value(options));
+            final char[] passwordHash = getPasswordHash(terminal, env, passwordOption.value(options));
             String[] roles = parseRoles(terminal, env, rolesOption.value(options));
 
             Path passwordFile = FileUserPasswdStore.resolveFile(env);
@@ -124,9 +124,8 @@ public class UsersTool extends LoggingAwareMultiCommand {
             if (users.containsKey(username)) {
                 throw new UserException(ExitCodes.CODE_ERROR, "User [" + username + "] already exists");
             }
-            Hasher hasher = Hasher.BCRYPT;
             users = new HashMap<>(users); // make modifiable
-            users.put(username, hasher.hash(new SecureString(password)));
+            users.put(username, passwordHash);
             FileUserPasswdStore.writeFile(users, passwordFile);
 
             if (roles.length > 0) {
@@ -217,18 +216,19 @@ public class UsersTool extends LoggingAwareMultiCommand {
         protected void execute(Terminal terminal, OptionSet options, Environment env) throws Exception {
 
             String username = parseUsername(arguments.values(options), env.settings());
-            char[] password = parsePassword(terminal, passwordOption.value(options));
+            char[] passwordHash = getPasswordHash(terminal, env, passwordOption.value(options));
 
             Path file = FileUserPasswdStore.resolveFile(env);
             FileAttributesChecker attributesChecker = new FileAttributesChecker(file);
-            Map<String, char[]> users = new HashMap<>(FileUserPasswdStore.parseFile(file, null, env.settings()));
+            Map<String, char[]> users = FileUserPasswdStore.parseFile(file, null, env.settings());
             if (users == null) {
                 throw new UserException(ExitCodes.CONFIG, "Configuration file [" + file + "] is missing");
             }
             if (users.containsKey(username) == false) {
                 throw new UserException(ExitCodes.NO_USER, "User [" + username + "] doesn't exist");
             }
-            users.put(username, Hasher.BCRYPT.hash(new SecureString(password)));
+            users = new HashMap<>(users); // make modifiable
+            users.put(username, passwordHash);
             FileUserPasswdStore.writeFile(users, file);
 
             attributesChecker.check(terminal);
@@ -294,7 +294,7 @@ public class UsersTool extends LoggingAwareMultiCommand {
 
             Map<String, String[]> userRolesToWrite = new HashMap<>(userRoles.size());
             userRolesToWrite.putAll(userRoles);
-            if (roles.size() == 0) {
+            if (roles.isEmpty()) {
                 userRolesToWrite.remove(username);
             } else {
                 userRolesToWrite.put(username, new LinkedHashSet<>(roles).toArray(new String[]{}));
@@ -367,7 +367,7 @@ public class UsersTool extends LoggingAwareMultiCommand {
                     Path rolesFile = FileRolesStore.resolveFile(env).toAbsolutePath();
                     terminal.println("");
                     terminal.println(" [*]   Role is not in the [" + rolesFile.toAbsolutePath() + "] file. If the role has been created "
-                            + "using the API, please disregard this message.");
+                        + "using the API, please disregard this message.");
                 }
             } else {
                 terminal.println(String.format(Locale.ROOT, "%-15s: -", username));
@@ -401,7 +401,7 @@ public class UsersTool extends LoggingAwareMultiCommand {
                 Path rolesFile = FileRolesStore.resolveFile(env).toAbsolutePath();
                 terminal.println("");
                 terminal.println(" [*]   Role is not in the [" + rolesFile.toAbsolutePath() + "] file. If the role has been created "
-                        + "using the API, please disregard this message.");
+                    + "using the API, please disregard this message.");
             }
         }
     }
@@ -437,23 +437,32 @@ public class UsersTool extends LoggingAwareMultiCommand {
         return username;
     }
 
+    private static char[] getPasswordHash(Terminal terminal, Environment env, String cliPasswordValue) throws UserException {
+        final Hasher hasher = Hasher.resolve(XPackSettings.PASSWORD_HASHING_ALGORITHM.get(env.settings()));
+        final char[] passwordHash;
+        try (SecureString password = parsePassword(terminal, cliPasswordValue)) {
+            passwordHash = hasher.hash(password);
+        }
+        return passwordHash;
+    }
+
     // pkg private for testing
-    static char[] parsePassword(Terminal terminal, String passwordStr) throws UserException {
-        char[] password;
+    static SecureString parsePassword(Terminal terminal, String passwordStr) throws UserException {
+        SecureString password;
         if (passwordStr != null) {
-            password = passwordStr.toCharArray();
+            password = new SecureString(passwordStr.toCharArray());
             Validation.Error validationError = Users.validatePassword(password);
             if (validationError != null) {
                 throw new UserException(ExitCodes.DATA_ERROR, "Invalid password..." + validationError);
             }
         } else {
-            password = terminal.readSecret("Enter new password: ");
+            password = new SecureString(terminal.readSecret("Enter new password: "));
             Validation.Error validationError = Users.validatePassword(password);
             if (validationError != null) {
                 throw new UserException(ExitCodes.DATA_ERROR, "Invalid password..." + validationError);
             }
             char[] retyped = terminal.readSecret("Retype new password: ");
-            if (Arrays.equals(password, retyped) == false) {
+            if (Arrays.equals(password.getChars(), retyped) == false) {
                 throw new UserException(ExitCodes.DATA_ERROR, "Password mismatch");
             }
         }
@@ -466,11 +475,11 @@ public class UsersTool extends LoggingAwareMultiCommand {
         Set<String> knownRoles = Sets.union(FileRolesStore.parseFileForRoleNames(rolesFile, null), ReservedRolesStore.names());
         Set<String> unknownRoles = Sets.difference(Sets.newHashSet(roles), knownRoles);
         if (!unknownRoles.isEmpty()) {
-            terminal.println(String.format(Locale.ROOT, "Warning: The following roles [%s] are not in the [%s] file. Make sure the names " +
-                    "are correct. If the names are correct and the roles were created using the API please disregard this message. " +
-                    "Nonetheless the user will still be associated with all specified roles",
+            terminal.errorPrintln(String.format(Locale.ROOT, "Warning: The following roles [%s] are not in the [%s] file. " +
+                    "Make sure the names are correct. If the names are correct and the roles were created using the API please " +
+                    "disregard this message. Nonetheless the user will still be associated with all specified roles",
                 Strings.collectionToCommaDelimitedString(unknownRoles), rolesFile.toAbsolutePath()));
-            terminal.println("Known roles: " + knownRoles.toString());
+            terminal.errorPrintln("Known roles: " + knownRoles.toString());
         }
     }
 

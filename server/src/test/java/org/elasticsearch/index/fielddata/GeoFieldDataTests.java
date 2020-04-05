@@ -23,9 +23,10 @@ import org.apache.lucene.document.Field;
 import org.apache.lucene.document.StringField;
 import org.apache.lucene.index.LeafReaderContext;
 import org.apache.lucene.index.Term;
-import org.elasticsearch.index.fielddata.plain.AbstractAtomicGeoPointFieldData;
+import org.elasticsearch.index.fielddata.plain.AbstractLeafGeoPointFieldData;
 
 import java.util.List;
+
 import static org.hamcrest.Matchers.greaterThanOrEqualTo;
 
 /**
@@ -153,13 +154,13 @@ public class GeoFieldDataTests extends AbstractGeoFieldDataTestCase {
     @Override
     public void testSingleValueAllSet() throws Exception {
         fillSingleValueAllSet();
-        IndexFieldData indexFieldData = getForField("value");
+        IndexFieldData<?> indexFieldData = getForField("value");
         List<LeafReaderContext> readerContexts = refreshReader();
         for (LeafReaderContext readerContext : readerContexts) {
-            AtomicFieldData fieldData = indexFieldData.load(readerContext);
+            LeafFieldData fieldData = indexFieldData.load(readerContext);
             assertThat(fieldData.ramBytesUsed(), greaterThanOrEqualTo(minRamBytesUsed()));
 
-            MultiGeoPointValues fieldValues = ((AbstractAtomicGeoPointFieldData)fieldData).getGeoPointValues();
+            MultiGeoPointValues fieldValues = ((AbstractLeafGeoPointFieldData)fieldData).getGeoPointValues();
             assertValues(fieldValues, 0);
             assertValues(fieldValues, 1);
             assertValues(fieldValues, 2);
@@ -169,13 +170,13 @@ public class GeoFieldDataTests extends AbstractGeoFieldDataTestCase {
     @Override
     public void testSingleValueWithMissing() throws Exception {
         fillSingleValueWithMissing();
-        IndexFieldData indexFieldData = getForField("value");
+        IndexFieldData<?> indexFieldData = getForField("value");
         List<LeafReaderContext> readerContexts = refreshReader();
         for (LeafReaderContext readerContext : readerContexts) {
-            AtomicFieldData fieldData = indexFieldData.load(readerContext);
+            LeafFieldData fieldData = indexFieldData.load(readerContext);
             assertThat(fieldData.ramBytesUsed(), greaterThanOrEqualTo(minRamBytesUsed()));
 
-            MultiGeoPointValues fieldValues = ((AbstractAtomicGeoPointFieldData)fieldData).getGeoPointValues();
+            MultiGeoPointValues fieldValues = ((AbstractLeafGeoPointFieldData)fieldData).getGeoPointValues();
             assertValues(fieldValues, 0);
             assertMissing(fieldValues, 1);
             assertValues(fieldValues, 2);
@@ -185,13 +186,13 @@ public class GeoFieldDataTests extends AbstractGeoFieldDataTestCase {
     @Override
     public void testMultiValueAllSet() throws Exception {
         fillMultiValueAllSet();
-        IndexFieldData indexFieldData = getForField("value");
+        IndexFieldData<?> indexFieldData = getForField("value");
         List<LeafReaderContext> readerContexts = refreshReader();
         for (LeafReaderContext readerContext : readerContexts) {
-            AtomicFieldData fieldData = indexFieldData.load(readerContext);
+            LeafFieldData fieldData = indexFieldData.load(readerContext);
             assertThat(fieldData.ramBytesUsed(), greaterThanOrEqualTo(minRamBytesUsed()));
 
-            MultiGeoPointValues fieldValues = ((AbstractAtomicGeoPointFieldData)fieldData).getGeoPointValues();
+            MultiGeoPointValues fieldValues = ((AbstractLeafGeoPointFieldData)fieldData).getGeoPointValues();
             assertValues(fieldValues, 0);
             assertValues(fieldValues, 1);
             assertValues(fieldValues, 2);
@@ -201,13 +202,13 @@ public class GeoFieldDataTests extends AbstractGeoFieldDataTestCase {
     @Override
     public void testMultiValueWithMissing() throws Exception {
         fillMultiValueWithMissing();
-        IndexFieldData indexFieldData = getForField("value");
+        IndexFieldData<?> indexFieldData = getForField("value");
         List<LeafReaderContext> readerContexts = refreshReader();
         for (LeafReaderContext readerContext : readerContexts) {
-            AtomicFieldData fieldData = indexFieldData.load(readerContext);
+            LeafFieldData fieldData = indexFieldData.load(readerContext);
             assertThat(fieldData.ramBytesUsed(), greaterThanOrEqualTo(minRamBytesUsed()));
 
-            MultiGeoPointValues fieldValues = ((AbstractAtomicGeoPointFieldData)fieldData).getGeoPointValues();
+            MultiGeoPointValues fieldValues = ((AbstractLeafGeoPointFieldData)fieldData).getGeoPointValues();
 
             assertValues(fieldValues, 0);
             assertMissing(fieldValues, 1);

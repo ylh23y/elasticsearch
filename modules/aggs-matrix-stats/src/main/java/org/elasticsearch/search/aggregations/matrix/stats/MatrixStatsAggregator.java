@@ -19,6 +19,7 @@
 package org.elasticsearch.search.aggregations.matrix.stats;
 
 import org.apache.lucene.index.LeafReaderContext;
+import org.apache.lucene.search.ScoreMode;
 import org.elasticsearch.common.lease.Releasables;
 import org.elasticsearch.common.util.BigArrays;
 import org.elasticsearch.common.util.ObjectArray;
@@ -30,7 +31,7 @@ import org.elasticsearch.search.aggregations.LeafBucketCollector;
 import org.elasticsearch.search.aggregations.LeafBucketCollectorBase;
 import org.elasticsearch.search.aggregations.metrics.MetricsAggregator;
 import org.elasticsearch.search.aggregations.pipeline.PipelineAggregator;
-import org.elasticsearch.search.aggregations.support.MultiValuesSource.NumericMultiValuesSource;
+import org.elasticsearch.search.aggregations.support.ArrayValuesSource.NumericArrayValuesSource;
 import org.elasticsearch.search.aggregations.support.ValuesSource;
 import org.elasticsearch.search.internal.SearchContext;
 
@@ -43,17 +44,17 @@ import java.util.Map;
  **/
 final class MatrixStatsAggregator extends MetricsAggregator {
     /** Multiple ValuesSource with field names */
-    private final NumericMultiValuesSource valuesSources;
+    private final NumericArrayValuesSource valuesSources;
 
     /** array of descriptive stats, per shard, needed to compute the correlation */
     ObjectArray<RunningStats> stats;
 
     MatrixStatsAggregator(String name, Map<String, ValuesSource.Numeric> valuesSources, SearchContext context,
                                  Aggregator parent, MultiValueMode multiValueMode, List<PipelineAggregator> pipelineAggregators,
-                                 Map<String,Object> metaData) throws IOException {
-        super(name, context, parent, pipelineAggregators, metaData);
+                                 Map<String,Object> metadata) throws IOException {
+        super(name, context, parent, pipelineAggregators, metadata);
         if (valuesSources != null && !valuesSources.isEmpty()) {
-            this.valuesSources = new NumericMultiValuesSource(valuesSources, multiValueMode);
+            this.valuesSources = new NumericArrayValuesSource(valuesSources, multiValueMode);
             stats = context.bigArrays().newObjectArray(1);
         } else {
             this.valuesSources = null;
@@ -61,8 +62,8 @@ final class MatrixStatsAggregator extends MetricsAggregator {
     }
 
     @Override
-    public boolean needsScores() {
-        return (valuesSources == null) ? false : valuesSources.needsScores();
+    public ScoreMode scoreMode() {
+        return (valuesSources != null && valuesSources.needsScores()) ? ScoreMode.COMPLETE : ScoreMode.COMPLETE_NO_SCORES;
     }
 
     @Override
@@ -84,7 +85,7 @@ final class MatrixStatsAggregator extends MetricsAggregator {
             @Override
             public void collect(int doc, long bucket) throws IOException {
                 // get fields
-                if (includeDocument(doc) == true) {
+                if (includeDocument(doc)) {
                     stats = bigArrays.grow(stats, bucket + 1);
                     RunningStats stat = stats.get(bucket);
                     // add document fields to correlation stats
@@ -125,12 +126,12 @@ final class MatrixStatsAggregator extends MetricsAggregator {
         if (valuesSources == null || bucket >= stats.size()) {
             return buildEmptyAggregation();
         }
-        return new InternalMatrixStats(name, stats.size(), stats.get(bucket), null, pipelineAggregators(), metaData());
+        return new InternalMatrixStats(name, stats.size(), stats.get(bucket), null, metadata());
     }
 
     @Override
     public InternalAggregation buildEmptyAggregation() {
-        return new InternalMatrixStats(name, 0, null, null, pipelineAggregators(), metaData());
+        return new InternalMatrixStats(name, 0, null, null, metadata());
     }
 
     @Override

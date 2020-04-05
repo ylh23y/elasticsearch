@@ -14,7 +14,6 @@ import org.elasticsearch.client.Client;
 import org.elasticsearch.cluster.ClusterState;
 import org.elasticsearch.cluster.service.ClusterService;
 import org.elasticsearch.common.settings.Setting;
-import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.common.unit.TimeValue;
 import org.elasticsearch.license.XPackLicenseState;
 import org.elasticsearch.xpack.core.monitoring.exporter.MonitoringDoc;
@@ -49,12 +48,10 @@ public class NodeStatsCollector extends Collector {
 
     private final Client client;
 
-    public NodeStatsCollector(final Settings settings,
-                              final ClusterService clusterService,
+    public NodeStatsCollector(final ClusterService clusterService,
                               final XPackLicenseState licenseState,
                               final Client client) {
-
-        super(settings, NodeStatsMonitoringDoc.TYPE, clusterService, NODE_STATS_TIMEOUT, licenseState);
+        super(NodeStatsMonitoringDoc.TYPE, clusterService, NODE_STATS_TIMEOUT, licenseState);
         this.client = Objects.requireNonNull(client);
     }
 
@@ -70,11 +67,12 @@ public class NodeStatsCollector extends Collector {
                                                   final ClusterState clusterState) throws Exception {
         NodesStatsRequest request = new NodesStatsRequest("_local");
         request.indices(FLAGS);
-        request.os(true);
-        request.jvm(true);
-        request.process(true);
-        request.threadPool(true);
-        request.fs(true);
+        request.addMetrics(
+            NodesStatsRequest.Metric.OS.metricName(),
+            NodesStatsRequest.Metric.JVM.metricName(),
+            NodesStatsRequest.Metric.PROCESS.metricName(),
+            NodesStatsRequest.Metric.THREAD_POOL.metricName(),
+            NodesStatsRequest.Metric.FS.metricName());
 
         final NodesStatsResponse response = client.admin().cluster().nodesStats(request).actionGet(getCollectionTimeout());
 

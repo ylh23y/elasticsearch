@@ -5,22 +5,24 @@
  */
 package org.elasticsearch.license;
 
+import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.apache.logging.log4j.message.ParameterizedMessage;
 import org.apache.logging.log4j.util.Supplier;
 import org.elasticsearch.Version;
 import org.elasticsearch.cluster.ClusterState;
 import org.elasticsearch.cluster.ClusterStateUpdateTask;
-import org.elasticsearch.cluster.metadata.MetaData;
+import org.elasticsearch.cluster.metadata.Metadata;
 import org.elasticsearch.cluster.service.ClusterService;
 import org.elasticsearch.common.Nullable;
-import org.elasticsearch.common.logging.Loggers;
 import org.elasticsearch.common.settings.Settings;
+import org.elasticsearch.xpack.core.XPackPlugin;
 
 import java.time.Clock;
 import java.util.UUID;
 
 public class StartupSelfGeneratedLicenseTask extends ClusterStateUpdateTask {
+    private static final Logger logger = LogManager.getLogger(StartupSelfGeneratedLicenseTask.class);
 
     /**
      * Max number of nodes licensed by generated trial license
@@ -30,54 +32,49 @@ public class StartupSelfGeneratedLicenseTask extends ClusterStateUpdateTask {
     private final Settings settings;
     private final Clock clock;
     private final ClusterService clusterService;
-    private final Logger logger;
 
     public StartupSelfGeneratedLicenseTask(Settings settings, Clock clock, ClusterService clusterService) {
         this.settings = settings;
         this.clock = clock;
         this.clusterService = clusterService;
-        this.logger = Loggers.getLogger(getClass(), settings);
     }
 
     @Override
     public void clusterStateProcessed(String source, ClusterState oldState, ClusterState newState) {
-        LicensesMetaData licensesMetaData = newState.metaData().custom(LicensesMetaData.TYPE);
+        LicensesMetadata licensesMetadata = newState.metadata().custom(LicensesMetadata.TYPE);
         if (logger.isDebugEnabled()) {
-            logger.debug("registered self generated license: {}", licensesMetaData);
+            logger.debug("registered self generated license: {}", licensesMetadata);
         }
     }
 
     @Override
     public ClusterState execute(ClusterState currentState) throws Exception {
-        final MetaData metaData = currentState.metaData();
-        final LicensesMetaData currentLicensesMetaData = metaData.custom(LicensesMetaData.TYPE);
+        XPackPlugin.checkReadyForXPackCustomMetadata(currentState);
+        final Metadata metadata = currentState.metadata();
+        final LicensesMetadata currentLicensesMetadata = metadata.custom(LicensesMetadata.TYPE);
         // do not generate a license if any license is present
-        if (currentLicensesMetaData == null) {
-            String type = LicenseService.SELF_GENERATED_LICENSE_TYPE.get(settings);
-            if (SelfGeneratedLicense.validSelfGeneratedType(type) == false) {
-                throw new IllegalArgumentException("Illegal self generated license type [" + type +
-                        "]. Must be trial or basic.");
-            }
+        if (currentLicensesMetadata == null) {
+            License.LicenseType type = SelfGeneratedLicense.validateSelfGeneratedType(
+                LicenseService.SELF_GENERATED_LICENSE_TYPE.get(settings));
             return updateWithLicense(currentState, type);
-        } else if (LicenseUtils.licenseNeedsExtended(currentLicensesMetaData.getLicense())) {
-            return extendBasic(currentState, currentLicensesMetaData);
-        } else if (LicenseUtils.signatureNeedsUpdate(currentLicensesMetaData.getLicense())) {
-            return updateLicenseSignature(currentState, currentLicensesMetaData);
+        } else if (LicenseUtils.signatureNeedsUpdate(currentLicensesMetadata.getLicense(), currentState.nodes())) {
+            return updateLicenseSignature(currentState, currentLicensesMetadata);
+        } else if (LicenseUtils.licenseNeedsExtended(currentLicensesMetadata.getLicense())) {
+            return extendBasic(currentState, currentLicensesMetadata);
         } else {
             return currentState;
         }
     }
 
-    private ClusterState updateLicenseSignature(ClusterState currentState, LicensesMetaData currentLicenseMetaData) {
-        License license = currentLicenseMetaData.getLicense();
-        MetaData.Builder mdBuilder = MetaData.builder(currentState.metaData());
+    private ClusterState updateLicenseSignature(ClusterState currentState, LicensesMetadata currentLicenseMetadata) {
+        License license = currentLicenseMetadata.getLicense();
+        Metadata.Builder mdBuilder = Metadata.builder(currentState.metadata());
         String type = license.type();
         long issueDate = license.issueDate();
-        long expiryDate;
-        if ("basic".equals(type)) {
+        long expiryDate = license.expiryDate();
+        // extend the basic license expiration date if needed since extendBasic will not be called now
+        if (License.LicenseType.isBasic(type) &&  expiryDate != LicenseService.BASIC_SELF_GENERATED_LICENSE_EXPIRATION_MILLIS) {
             expiryDate = LicenseService.BASIC_SELF_GENERATED_LICENSE_EXPIRATION_MILLIS;
-        } else {
-            expiryDate = issueDate + LicenseService.NON_BASIC_SELF_GENERATED_LICENSE_DURATION.getMillis();
         }
         License.Builder specBuilder = License.builder()
                 .uid(license.uid())
@@ -86,11 +83,13 @@ public class StartupSelfGeneratedLicenseTask extends ClusterStateUpdateTask {
                 .issueDate(issueDate)
                 .type(type)
                 .expiryDate(expiryDate);
-        License selfGeneratedLicense = SelfGeneratedLicense.create(specBuilder);
-        Version trialVersion = currentLicenseMetaData.getMostRecentTrialVersion();
-        LicensesMetaData newLicenseMetadata = new LicensesMetaData(selfGeneratedLicense, trialVersion);
-        mdBuilder.putCustom(LicensesMetaData.TYPE, newLicenseMetadata);
-        return ClusterState.builder(currentState).metaData(mdBuilder).build();
+        License selfGeneratedLicense = SelfGeneratedLicense.create(specBuilder, currentState.nodes());
+        Version trialVersion = currentLicenseMetadata.getMostRecentTrialVersion();
+        LicensesMetadata newLicenseMetadata = new LicensesMetadata(selfGeneratedLicense, trialVersion);
+        mdBuilder.putCustom(LicensesMetadata.TYPE, newLicenseMetadata);
+        logger.info("Updating existing license to the new version.\n\nOld license:\n {}\n\n New license:\n{}",
+            license, newLicenseMetadata.getLicense());
+        return ClusterState.builder(currentState).metadata(mdBuilder).build();
     }
 
     @Override
@@ -98,35 +97,35 @@ public class StartupSelfGeneratedLicenseTask extends ClusterStateUpdateTask {
         logger.error((Supplier<?>) () -> new ParameterizedMessage("unexpected failure during [{}]", source), e);
     }
 
-    private ClusterState extendBasic(ClusterState currentState, LicensesMetaData currentLicenseMetadata) {
+    private ClusterState extendBasic(ClusterState currentState, LicensesMetadata currentLicenseMetadata) {
         License license = currentLicenseMetadata.getLicense();
-        MetaData.Builder mdBuilder = MetaData.builder(currentState.metaData());
-        LicensesMetaData newLicenseMetadata = createBasicLicenseFromExistingLicense(currentLicenseMetadata);
-        mdBuilder.putCustom(LicensesMetaData.TYPE, newLicenseMetadata);
+        Metadata.Builder mdBuilder = Metadata.builder(currentState.metadata());
+        LicensesMetadata newLicenseMetadata = createBasicLicenseFromExistingLicense(currentLicenseMetadata);
+        mdBuilder.putCustom(LicensesMetadata.TYPE, newLicenseMetadata);
         logger.info("Existing basic license has an expiration. Basic licenses no longer expire." +
                 "Regenerating license.\n\nOld license:\n {}\n\n New license:\n{}", license, newLicenseMetadata.getLicense());
-        return ClusterState.builder(currentState).metaData(mdBuilder).build();
+        return ClusterState.builder(currentState).metadata(mdBuilder).build();
     }
 
-    private LicensesMetaData createBasicLicenseFromExistingLicense(LicensesMetaData currentLicenseMetadata) {
+    private LicensesMetadata createBasicLicenseFromExistingLicense(LicensesMetadata currentLicenseMetadata) {
         License currentLicense = currentLicenseMetadata.getLicense();
         License.Builder specBuilder = License.builder()
                 .uid(currentLicense.uid())
                 .issuedTo(currentLicense.issuedTo())
                 .maxNodes(selfGeneratedLicenseMaxNodes)
                 .issueDate(currentLicense.issueDate())
-                .type("basic")
+                .type(License.LicenseType.BASIC)
                 .expiryDate(LicenseService.BASIC_SELF_GENERATED_LICENSE_EXPIRATION_MILLIS);
-        License selfGeneratedLicense = SelfGeneratedLicense.create(specBuilder);
+        License selfGeneratedLicense = SelfGeneratedLicense.create(specBuilder, currentLicense.version());
         Version trialVersion = currentLicenseMetadata.getMostRecentTrialVersion();
-        return new LicensesMetaData(selfGeneratedLicense, trialVersion);
+        return new LicensesMetadata(selfGeneratedLicense, trialVersion);
     }
 
-    private ClusterState updateWithLicense(ClusterState currentState, String type) {
+    private ClusterState updateWithLicense(ClusterState currentState, License.LicenseType type) {
         long issueDate = clock.millis();
-        MetaData.Builder mdBuilder = MetaData.builder(currentState.metaData());
+        Metadata.Builder mdBuilder = Metadata.builder(currentState.metadata());
         long expiryDate;
-        if ("basic".equals(type)) {
+        if (type == License.LicenseType.BASIC) {
             expiryDate = LicenseService.BASIC_SELF_GENERATED_LICENSE_EXPIRATION_MILLIS;
         } else {
             expiryDate = issueDate + LicenseService.NON_BASIC_SELF_GENERATED_LICENSE_DURATION.getMillis();
@@ -138,14 +137,14 @@ public class StartupSelfGeneratedLicenseTask extends ClusterStateUpdateTask {
                 .issueDate(issueDate)
                 .type(type)
                 .expiryDate(expiryDate);
-        License selfGeneratedLicense = SelfGeneratedLicense.create(specBuilder);
-        LicensesMetaData licensesMetaData;
-        if ("trial".equals(type)) {
-            licensesMetaData = new LicensesMetaData(selfGeneratedLicense, Version.CURRENT);
+        License selfGeneratedLicense = SelfGeneratedLicense.create(specBuilder, currentState.nodes());
+        LicensesMetadata licensesMetadata;
+        if (License.LicenseType.TRIAL.equals(type)) {
+            licensesMetadata = new LicensesMetadata(selfGeneratedLicense, Version.CURRENT);
         } else {
-            licensesMetaData = new LicensesMetaData(selfGeneratedLicense, null);
+            licensesMetadata = new LicensesMetadata(selfGeneratedLicense, null);
         }
-        mdBuilder.putCustom(LicensesMetaData.TYPE, licensesMetaData);
-        return ClusterState.builder(currentState).metaData(mdBuilder).build();
+        mdBuilder.putCustom(LicensesMetadata.TYPE, licensesMetadata);
+        return ClusterState.builder(currentState).metadata(mdBuilder).build();
     }
 }

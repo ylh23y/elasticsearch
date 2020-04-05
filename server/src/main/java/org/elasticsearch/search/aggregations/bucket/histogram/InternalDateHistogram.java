@@ -20,9 +20,9 @@ package org.elasticsearch.search.aggregations.bucket.histogram;
 
 import org.apache.lucene.util.CollectionUtil;
 import org.apache.lucene.util.PriorityQueue;
+import org.elasticsearch.common.Rounding;
 import org.elasticsearch.common.io.stream.StreamInput;
 import org.elasticsearch.common.io.stream.StreamOutput;
-import org.elasticsearch.common.rounding.Rounding;
 import org.elasticsearch.common.xcontent.XContentBuilder;
 import org.elasticsearch.search.DocValueFormat;
 import org.elasticsearch.search.aggregations.Aggregations;
@@ -33,11 +33,10 @@ import org.elasticsearch.search.aggregations.InternalMultiBucketAggregation;
 import org.elasticsearch.search.aggregations.InternalOrder;
 import org.elasticsearch.search.aggregations.KeyComparable;
 import org.elasticsearch.search.aggregations.bucket.MultiBucketsAggregation;
-import org.elasticsearch.search.aggregations.pipeline.PipelineAggregator;
-import org.joda.time.DateTime;
-import org.joda.time.DateTimeZone;
 
 import java.io.IOException;
+import java.time.Instant;
+import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Iterator;
@@ -77,7 +76,7 @@ public final class InternalDateHistogram extends InternalMultiBucketAggregation<
             this.keyed = keyed;
             key = in.readLong();
             docCount = in.readVLong();
-            aggregations = InternalAggregations.readAggregations(in);
+            aggregations = new InternalAggregations(in);
         }
 
         @Override
@@ -107,12 +106,12 @@ public final class InternalDateHistogram extends InternalMultiBucketAggregation<
 
         @Override
         public String getKeyAsString() {
-            return format.format(key);
+            return format.format(key).toString();
         }
 
         @Override
         public Object getKey() {
-            return new DateTime(key, DateTimeZone.UTC);
+            return Instant.ofEpochMilli(key).atZone(ZoneOffset.UTC);
         }
 
         @Override
@@ -125,20 +124,9 @@ public final class InternalDateHistogram extends InternalMultiBucketAggregation<
             return aggregations;
         }
 
-        Bucket reduce(List<Bucket> buckets, ReduceContext context) {
-            List<InternalAggregations> aggregations = new ArrayList<>(buckets.size());
-            long docCount = 0;
-            for (Bucket bucket : buckets) {
-                docCount += bucket.docCount;
-                aggregations.add((InternalAggregations) bucket.getAggregations());
-            }
-            InternalAggregations aggs = InternalAggregations.reduce(aggregations, context);
-            return new InternalDateHistogram.Bucket(key, docCount, keyed, format, aggs);
-        }
-
         @Override
         public XContentBuilder toXContent(XContentBuilder builder, Params params) throws IOException {
-            String keyAsString = format.format(key);
+            String keyAsString = format.format(key).toString();
             if (keyed) {
                 builder.startObject(keyAsString);
             } else {
@@ -185,13 +173,13 @@ public final class InternalDateHistogram extends InternalMultiBucketAggregation<
         }
 
         EmptyBucketInfo(StreamInput in) throws IOException {
-            rounding = Rounding.Streams.read(in);
-            subAggregations = InternalAggregations.readAggregations(in);
+            rounding = Rounding.read(in);
+            subAggregations = new InternalAggregations(in);
             bounds = in.readOptionalWriteable(ExtendedBounds::new);
         }
 
         void writeTo(StreamOutput out) throws IOException {
-            Rounding.Streams.write(rounding, out);
+            rounding.writeTo(out);
             subAggregations.writeTo(out);
             out.writeOptionalWriteable(bounds);
         }
@@ -219,13 +207,11 @@ public final class InternalDateHistogram extends InternalMultiBucketAggregation<
     private final boolean keyed;
     private final long minDocCount;
     private final long offset;
-    private final EmptyBucketInfo emptyBucketInfo;
+    final EmptyBucketInfo emptyBucketInfo;
 
     InternalDateHistogram(String name, List<Bucket> buckets, BucketOrder order, long minDocCount, long offset,
-            EmptyBucketInfo emptyBucketInfo,
-            DocValueFormat formatter, boolean keyed, List<PipelineAggregator> pipelineAggregators,
-            Map<String, Object> metaData) {
-        super(name, pipelineAggregators, metaData);
+            EmptyBucketInfo emptyBucketInfo, DocValueFormat formatter, boolean keyed, Map<String, Object> metadata) {
+        super(name, metadata);
         this.buckets = buckets;
         this.order = order;
         this.offset = offset;
@@ -241,7 +227,7 @@ public final class InternalDateHistogram extends InternalMultiBucketAggregation<
      */
     public InternalDateHistogram(StreamInput in) throws IOException {
         super(in);
-        order = InternalOrder.Streams.readHistogramOrder(in, false);
+        order = InternalOrder.Streams.readHistogramOrder(in);
         minDocCount = in.readVLong();
         if (minDocCount == 0) {
             emptyBucketInfo = new EmptyBucketInfo(in);
@@ -256,7 +242,7 @@ public final class InternalDateHistogram extends InternalMultiBucketAggregation<
 
     @Override
     protected void doWriteTo(StreamOutput out) throws IOException {
-        InternalOrder.Streams.writeHistogramOrder(order, out, false);
+        InternalOrder.Streams.writeHistogramOrder(order, out);
         out.writeVLong(minDocCount);
         if (minDocCount == 0) {
             emptyBucketInfo.writeTo(out);
@@ -295,8 +281,7 @@ public final class InternalDateHistogram extends InternalMultiBucketAggregation<
 
     @Override
     public InternalDateHistogram create(List<Bucket> buckets) {
-        return new InternalDateHistogram(name, buckets, order, minDocCount, offset, emptyBucketInfo, format,
-                keyed, pipelineAggregators(), metaData);
+        return new InternalDateHistogram(name, buckets, order, minDocCount, offset, emptyBucketInfo, format, keyed, metadata);
     }
 
     @Override
@@ -342,7 +327,7 @@ public final class InternalDateHistogram extends InternalMultiBucketAggregation<
 
                 if (top.current.key != key) {
                     // the key changes, reduce what we already buffered and reset the buffer for current buckets
-                    final Bucket reduced = currentBuckets.get(0).reduce(currentBuckets, reduceContext);
+                    final Bucket reduced = reduceBucket(currentBuckets, reduceContext);
                     if (reduced.getDocCount() >= minDocCount || reduceContext.isFinalReduce() == false) {
                         reduceContext.consumeBucketsAndMaybeBreak(1);
                         reducedBuckets.add(reduced);
@@ -366,7 +351,7 @@ public final class InternalDateHistogram extends InternalMultiBucketAggregation<
             } while (pq.size() > 0);
 
             if (currentBuckets.isEmpty() == false) {
-                final Bucket reduced = currentBuckets.get(0).reduce(currentBuckets, reduceContext);
+                final Bucket reduced = reduceBucket(currentBuckets, reduceContext);
                 if (reduced.getDocCount() >= minDocCount || reduceContext.isFinalReduce() == false) {
                     reduceContext.consumeBucketsAndMaybeBreak(1);
                     reducedBuckets.add(reduced);
@@ -377,6 +362,23 @@ public final class InternalDateHistogram extends InternalMultiBucketAggregation<
         }
 
         return reducedBuckets;
+    }
+
+    /**
+     * Reduce a list of same-keyed buckets (from multiple shards) to a single bucket. This
+     * requires all buckets to have the same key.
+     */
+    @Override
+    protected Bucket reduceBucket(List<Bucket> buckets, ReduceContext context) {
+        assert buckets.size() > 0;
+        List<InternalAggregations> aggregations = new ArrayList<>(buckets.size());
+        long docCount = 0;
+        for (Bucket bucket : buckets) {
+            docCount += bucket.docCount;
+            aggregations.add((InternalAggregations) bucket.getAggregations());
+        }
+        InternalAggregations aggs = InternalAggregations.reduce(aggregations, context);
+        return createBucket(buckets.get(0).key, docCount, aggs);
     }
 
     private void addEmptyBuckets(List<Bucket> list, ReduceContext reduceContext) {
@@ -424,7 +426,7 @@ public final class InternalDateHistogram extends InternalMultiBucketAggregation<
                     iter.add(new InternalDateHistogram.Bucket(key, 0, keyed, format, reducedEmptySubAggs));
                     key = nextKey(key).longValue();
                 }
-                assert key == nextBucket.key;
+                assert key == nextBucket.key : "key: " + key + ", nextBucket.key: " + nextBucket.key;
             }
             lastBucket = iter.next();
         }
@@ -442,30 +444,26 @@ public final class InternalDateHistogram extends InternalMultiBucketAggregation<
     }
 
     @Override
-    public InternalAggregation doReduce(List<InternalAggregation> aggregations, ReduceContext reduceContext) {
+    public InternalAggregation reduce(List<InternalAggregation> aggregations, ReduceContext reduceContext) {
         List<Bucket> reducedBuckets = reduceBuckets(aggregations, reduceContext);
-
-        // adding empty buckets if needed
-        if (minDocCount == 0) {
-            addEmptyBuckets(reducedBuckets, reduceContext);
+        if (reduceContext.isFinalReduce()) {
+            if (minDocCount == 0) {
+                addEmptyBuckets(reducedBuckets, reduceContext);
+            }
+            if (InternalOrder.isKeyDesc(order)) {
+                // we just need to reverse here...
+                List<Bucket> reverse = new ArrayList<>(reducedBuckets);
+                Collections.reverse(reverse);
+                reducedBuckets = reverse;
+            } else if (InternalOrder.isKeyAsc(order) == false){
+                // nothing to do when sorting by key ascending, as data is already sorted since shards return
+                // sorted buckets and the merge-sort performed by reduceBuckets maintains order.
+                // otherwise, sorted by compound order or sub-aggregation, we need to fall back to a costly n*log(n) sort
+                CollectionUtil.introSort(reducedBuckets, order.comparator());
+            }
         }
-
-        if (InternalOrder.isKeyAsc(order) || reduceContext.isFinalReduce() == false) {
-            // nothing to do, data are already sorted since shards return
-            // sorted buckets and the merge-sort performed by reduceBuckets
-            // maintains order
-        } else if (InternalOrder.isKeyDesc(order)) {
-            // we just need to reverse here...
-            List<Bucket> reverse = new ArrayList<>(reducedBuckets);
-            Collections.reverse(reverse);
-            reducedBuckets = reverse;
-        } else {
-            // sorted by compound order or sub-aggregation, need to fall back to a costly n*log(n) sort
-            CollectionUtil.introSort(reducedBuckets, order.comparator(null));
-        }
-
         return new InternalDateHistogram(getName(), reducedBuckets, order, minDocCount, offset, emptyBucketInfo,
-                format, keyed, pipelineAggregators(), getMetaData());
+                format, keyed, getMetadata());
     }
 
     @Override
@@ -506,8 +504,7 @@ public final class InternalDateHistogram extends InternalMultiBucketAggregation<
             buckets2.add((Bucket) b);
         }
         buckets2 = Collections.unmodifiableList(buckets2);
-        return new InternalDateHistogram(name, buckets2, order, minDocCount, offset, emptyBucketInfo, format,
-                keyed, pipelineAggregators(), getMetaData());
+        return new InternalDateHistogram(name, buckets2, order, minDocCount, offset, emptyBucketInfo, format, keyed, getMetadata());
     }
 
     @Override
@@ -516,7 +513,11 @@ public final class InternalDateHistogram extends InternalMultiBucketAggregation<
     }
 
     @Override
-    protected boolean doEquals(Object obj) {
+    public boolean equals(Object obj) {
+        if (this == obj) return true;
+        if (obj == null || getClass() != obj.getClass()) return false;
+        if (super.equals(obj) == false) return false;
+
         InternalDateHistogram that = (InternalDateHistogram) obj;
         return Objects.equals(buckets, that.buckets)
                 && Objects.equals(order, that.order)
@@ -528,7 +529,7 @@ public final class InternalDateHistogram extends InternalMultiBucketAggregation<
     }
 
     @Override
-    protected int doHashCode() {
-        return Objects.hash(buckets, order, format, keyed, minDocCount, offset, emptyBucketInfo);
+    public int hashCode() {
+        return Objects.hash(super.hashCode(), buckets, order, format, keyed, minDocCount, offset, emptyBucketInfo);
     }
 }

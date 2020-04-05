@@ -5,27 +5,24 @@
  */
 package org.elasticsearch.xpack.core.ml.action;
 
+import org.elasticsearch.common.io.stream.Writeable;
 import org.elasticsearch.common.xcontent.XContentParser;
-import org.elasticsearch.test.AbstractStreamableXContentTestCase;
+import org.elasticsearch.test.AbstractSerializingTestCase;
 import org.elasticsearch.xpack.core.ml.action.PutFilterAction.Request;
-import org.elasticsearch.xpack.core.ml.job.config.MlFilter;
+import org.elasticsearch.xpack.core.ml.job.config.MlFilterTests;
 
-import java.util.ArrayList;
-import java.util.List;
+public class PutFilterActionRequestTests extends AbstractSerializingTestCase<Request> {
 
-public class PutFilterActionRequestTests extends AbstractStreamableXContentTestCase<Request> {
-
-    private final String filterId = randomAlphaOfLengthBetween(1, 20);
+    private final String filterId = MlFilterTests.randomValidFilterId();
 
     @Override
     protected Request createTestInstance() {
-        int size = randomInt(10);
-        List<String> items = new ArrayList<>(size);
-        for (int i = 0; i < size; i++) {
-            items.add(randomAlphaOfLengthBetween(1, 20));
-        }
-        MlFilter filter = new MlFilter(filterId, items);
-        return new PutFilterAction.Request(filter);
+        return new PutFilterAction.Request(MlFilterTests.createRandom(filterId));
+    }
+
+    @Override
+    protected Writeable.Reader<Request> instanceReader() {
+        return Request::new;
     }
 
     @Override
@@ -34,13 +31,7 @@ public class PutFilterActionRequestTests extends AbstractStreamableXContentTestC
     }
 
     @Override
-    protected Request createBlankInstance() {
-        return new PutFilterAction.Request();
-    }
-
-    @Override
     protected Request doParseInstance(XContentParser parser) {
         return PutFilterAction.Request.parseRequest(filterId, parser);
     }
-
 }

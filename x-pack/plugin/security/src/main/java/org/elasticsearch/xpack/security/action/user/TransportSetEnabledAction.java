@@ -8,15 +8,15 @@ package org.elasticsearch.xpack.security.action.user;
 import org.elasticsearch.action.ActionListener;
 import org.elasticsearch.action.support.ActionFilters;
 import org.elasticsearch.action.support.HandledTransportAction;
-import org.elasticsearch.cluster.metadata.IndexNameExpressionResolver;
 import org.elasticsearch.common.inject.Inject;
 import org.elasticsearch.common.settings.Settings;
+import org.elasticsearch.tasks.Task;
 import org.elasticsearch.threadpool.ThreadPool;
 import org.elasticsearch.transport.TransportService;
+import org.elasticsearch.xpack.core.security.SecurityContext;
 import org.elasticsearch.xpack.core.security.action.user.SetEnabledAction;
 import org.elasticsearch.xpack.core.security.action.user.SetEnabledRequest;
 import org.elasticsearch.xpack.core.security.action.user.SetEnabledResponse;
-import org.elasticsearch.xpack.core.security.authc.Authentication;
 import org.elasticsearch.xpack.core.security.user.AnonymousUser;
 import org.elasticsearch.xpack.core.security.user.SystemUser;
 import org.elasticsearch.xpack.core.security.user.XPackUser;
@@ -27,22 +27,26 @@ import org.elasticsearch.xpack.security.authc.esnative.NativeUsersStore;
  */
 public class TransportSetEnabledAction extends HandledTransportAction<SetEnabledRequest, SetEnabledResponse> {
 
+    private final Settings settings;
+    private final ThreadPool threadPool;
+    private final SecurityContext securityContext;
     private final NativeUsersStore usersStore;
 
     @Inject
     public TransportSetEnabledAction(Settings settings, ThreadPool threadPool, TransportService transportService,
-                                        ActionFilters actionFilters, IndexNameExpressionResolver indexNameExpressionResolver,
-                                        NativeUsersStore usersStore) {
-        super(settings, SetEnabledAction.NAME, threadPool, transportService, actionFilters, indexNameExpressionResolver,
-                SetEnabledRequest::new);
+                                     ActionFilters actionFilters, SecurityContext securityContext, NativeUsersStore usersStore) {
+        super(SetEnabledAction.NAME, transportService, actionFilters, SetEnabledRequest::new);
+        this.settings = settings;
+        this.threadPool = threadPool;
+        this.securityContext = securityContext;
         this.usersStore = usersStore;
     }
 
     @Override
-    protected void doExecute(SetEnabledRequest request, ActionListener<SetEnabledResponse> listener) {
+    protected void doExecute(Task task, SetEnabledRequest request, ActionListener<SetEnabledResponse> listener) {
         final String username = request.username();
         // make sure the user is not disabling themselves
-        if (Authentication.getAuthentication(threadPool.getThreadContext()).getUser().principal().equals(request.username())) {
+        if (securityContext.getUser().principal().equals(request.username())) {
             listener.onFailure(new IllegalArgumentException("users may not update the enabled status of their own account"));
             return;
         } else if (SystemUser.NAME.equals(username) || XPackUser.NAME.equals(username)) {

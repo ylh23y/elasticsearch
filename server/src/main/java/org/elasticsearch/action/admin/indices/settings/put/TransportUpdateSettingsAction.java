@@ -19,32 +19,42 @@
 
 package org.elasticsearch.action.admin.indices.settings.put;
 
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 import org.apache.logging.log4j.message.ParameterizedMessage;
 import org.elasticsearch.action.ActionListener;
 import org.elasticsearch.action.support.ActionFilters;
+import org.elasticsearch.action.support.master.AcknowledgedResponse;
 import org.elasticsearch.action.support.master.TransportMasterNodeAction;
 import org.elasticsearch.cluster.ClusterState;
 import org.elasticsearch.cluster.ack.ClusterStateUpdateResponse;
 import org.elasticsearch.cluster.block.ClusterBlockException;
 import org.elasticsearch.cluster.block.ClusterBlockLevel;
-import org.elasticsearch.cluster.metadata.IndexMetaData;
+import org.elasticsearch.cluster.metadata.IndexMetadata;
 import org.elasticsearch.cluster.metadata.IndexNameExpressionResolver;
-import org.elasticsearch.cluster.metadata.MetaDataUpdateSettingsService;
+import org.elasticsearch.cluster.metadata.MetadataUpdateSettingsService;
 import org.elasticsearch.cluster.service.ClusterService;
 import org.elasticsearch.common.inject.Inject;
-import org.elasticsearch.common.settings.Settings;
+import org.elasticsearch.common.io.stream.StreamInput;
 import org.elasticsearch.index.Index;
+import org.elasticsearch.tasks.Task;
 import org.elasticsearch.threadpool.ThreadPool;
 import org.elasticsearch.transport.TransportService;
 
-public class TransportUpdateSettingsAction extends TransportMasterNodeAction<UpdateSettingsRequest, UpdateSettingsResponse> {
+import java.io.IOException;
 
-    private final MetaDataUpdateSettingsService updateSettingsService;
+public class TransportUpdateSettingsAction extends TransportMasterNodeAction<UpdateSettingsRequest, AcknowledgedResponse> {
+
+    private static final Logger logger = LogManager.getLogger(TransportUpdateSettingsAction.class);
+
+    private final MetadataUpdateSettingsService updateSettingsService;
 
     @Inject
-    public TransportUpdateSettingsAction(Settings settings, TransportService transportService, ClusterService clusterService, ThreadPool threadPool,
-                                         MetaDataUpdateSettingsService updateSettingsService, ActionFilters actionFilters, IndexNameExpressionResolver indexNameExpressionResolver) {
-        super(settings, UpdateSettingsAction.NAME, transportService, clusterService, threadPool, actionFilters, indexNameExpressionResolver, UpdateSettingsRequest::new);
+    public TransportUpdateSettingsAction(TransportService transportService, ClusterService clusterService,
+                                         ThreadPool threadPool, MetadataUpdateSettingsService updateSettingsService,
+                                         ActionFilters actionFilters, IndexNameExpressionResolver indexNameExpressionResolver) {
+        super(UpdateSettingsAction.NAME, transportService, clusterService, threadPool, actionFilters, UpdateSettingsRequest::new,
+            indexNameExpressionResolver);
         this.updateSettingsService = updateSettingsService;
     }
 
@@ -62,21 +72,23 @@ public class TransportUpdateSettingsAction extends TransportMasterNodeAction<Upd
             return globalBlock;
         }
         if (request.settings().size() == 1 &&  // we have to allow resetting these settings otherwise users can't unblock an index
-            IndexMetaData.INDEX_BLOCKS_METADATA_SETTING.exists(request.settings())
-            || IndexMetaData.INDEX_READ_ONLY_SETTING.exists(request.settings())
-            || IndexMetaData.INDEX_BLOCKS_READ_ONLY_ALLOW_DELETE_SETTING.exists(request.settings())) {
+            IndexMetadata.INDEX_BLOCKS_METADATA_SETTING.exists(request.settings())
+            || IndexMetadata.INDEX_READ_ONLY_SETTING.exists(request.settings())
+            || IndexMetadata.INDEX_BLOCKS_READ_ONLY_ALLOW_DELETE_SETTING.exists(request.settings())) {
             return null;
         }
-        return state.blocks().indicesBlockedException(ClusterBlockLevel.METADATA_WRITE, indexNameExpressionResolver.concreteIndexNames(state, request));
+        return state.blocks().indicesBlockedException(ClusterBlockLevel.METADATA_WRITE,
+            indexNameExpressionResolver.concreteIndexNames(state, request));
     }
 
     @Override
-    protected UpdateSettingsResponse newResponse() {
-        return new UpdateSettingsResponse();
+    protected AcknowledgedResponse read(StreamInput in) throws IOException {
+        return new AcknowledgedResponse(in);
     }
 
     @Override
-    protected void masterOperation(final UpdateSettingsRequest request, final ClusterState state, final ActionListener<UpdateSettingsResponse> listener) {
+    protected void masterOperation(Task task, final UpdateSettingsRequest request, final ClusterState state,
+                                   final ActionListener<AcknowledgedResponse> listener) {
         final Index[] concreteIndices = indexNameExpressionResolver.concreteIndices(state, request);
         UpdateSettingsClusterStateUpdateRequest clusterStateUpdateRequest = new UpdateSettingsClusterStateUpdateRequest()
                 .indices(concreteIndices)
@@ -88,7 +100,7 @@ public class TransportUpdateSettingsAction extends TransportMasterNodeAction<Upd
         updateSettingsService.updateSettings(clusterStateUpdateRequest, new ActionListener<ClusterStateUpdateResponse>() {
             @Override
             public void onResponse(ClusterStateUpdateResponse response) {
-                listener.onResponse(new UpdateSettingsResponse(response.isAcknowledged()));
+                listener.onResponse(new AcknowledgedResponse(response.isAcknowledged()));
             }
 
             @Override

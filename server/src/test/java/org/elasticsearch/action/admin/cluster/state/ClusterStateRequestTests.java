@@ -23,6 +23,7 @@ import org.elasticsearch.Version;
 import org.elasticsearch.action.support.IndicesOptions;
 import org.elasticsearch.common.io.stream.BytesStreamOutput;
 import org.elasticsearch.common.io.stream.StreamInput;
+import org.elasticsearch.common.unit.TimeValue;
 import org.elasticsearch.test.ESTestCase;
 import org.elasticsearch.test.VersionUtils;
 
@@ -37,10 +38,21 @@ public class ClusterStateRequestTests extends ESTestCase {
         for (int i = 0; i < iterations; i++) {
 
             IndicesOptions indicesOptions = IndicesOptions.fromOptions(randomBoolean(), randomBoolean(), randomBoolean(), randomBoolean());
-            ClusterStateRequest clusterStateRequest = new ClusterStateRequest().routingTable(randomBoolean()).metaData(randomBoolean())
+            ClusterStateRequest clusterStateRequest = new ClusterStateRequest().routingTable(randomBoolean()).metadata(randomBoolean())
                     .nodes(randomBoolean()).blocks(randomBoolean()).indices("testindex", "testindex2").indicesOptions(indicesOptions);
 
-            Version testVersion = VersionUtils.randomVersionBetween(random(), Version.CURRENT.minimumCompatibilityVersion(), Version.CURRENT);
+            Version testVersion = VersionUtils.randomVersionBetween(random(),
+                Version.CURRENT.minimumCompatibilityVersion(), Version.CURRENT);
+            // TODO: change version to V_6_6_0 after backporting:
+            if (testVersion.onOrAfter(Version.V_7_0_0)) {
+                if (randomBoolean()) {
+                    clusterStateRequest.waitForMetadataVersion(randomLongBetween(1, Long.MAX_VALUE));
+                }
+                if (randomBoolean()) {
+                    clusterStateRequest.waitForTimeout(new TimeValue(randomNonNegativeLong()));
+                }
+            }
+
             BytesStreamOutput output = new BytesStreamOutput();
             output.setVersion(testVersion);
             clusterStateRequest.writeTo(output);
@@ -50,12 +62,21 @@ public class ClusterStateRequestTests extends ESTestCase {
             ClusterStateRequest deserializedCSRequest = new ClusterStateRequest(streamInput);
 
             assertThat(deserializedCSRequest.routingTable(), equalTo(clusterStateRequest.routingTable()));
-            assertThat(deserializedCSRequest.metaData(), equalTo(clusterStateRequest.metaData()));
+            assertThat(deserializedCSRequest.metadata(), equalTo(clusterStateRequest.metadata()));
             assertThat(deserializedCSRequest.nodes(), equalTo(clusterStateRequest.nodes()));
             assertThat(deserializedCSRequest.blocks(), equalTo(clusterStateRequest.blocks()));
             assertThat(deserializedCSRequest.indices(), equalTo(clusterStateRequest.indices()));
             assertOptionsMatch(deserializedCSRequest.indicesOptions(), clusterStateRequest.indicesOptions());
+            assertThat(deserializedCSRequest.waitForMetadataVersion(), equalTo(clusterStateRequest.waitForMetadataVersion()));
+            assertThat(deserializedCSRequest.waitForTimeout(), equalTo(clusterStateRequest.waitForTimeout()));
         }
+    }
+
+    public void testWaitForMetadataVersion() {
+        ClusterStateRequest clusterStateRequest = new ClusterStateRequest();
+        expectThrows(IllegalArgumentException.class,
+            () -> clusterStateRequest.waitForMetadataVersion(randomLongBetween(Long.MIN_VALUE, 0)));
+        clusterStateRequest.waitForMetadataVersion(randomLongBetween(1, Long.MAX_VALUE));
     }
 
     private static void assertOptionsMatch(IndicesOptions in, IndicesOptions out) {

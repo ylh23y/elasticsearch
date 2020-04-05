@@ -1,20 +1,17 @@
+[role="xpack"]
 [[pki-realm]]
 === PKI user authentication
 
-You can configure {security} to use Public Key Infrastructure (PKI) certificates
-to authenticate users in {es}. This requires clients to present X.509
-certificates.
+You can configure {es} to use Public Key Infrastructure (PKI) certificates to
+authenticate users. In this scenario, clients connecting directly to {es} must
+present X.509 certificates. First, the certificates must be accepted for
+authentication on the SSL/TLS layer on {es}. Then they are optionally
+further validated by a PKI realm. See <<pki-realm-for-direct-clients>>.
 
-NOTE: You cannot use PKI certificates to authenticate users in {kib}.
+You can also use PKI certificates to authenticate to {kib}, however this
+requires some additional configuration. On {es}, this configuration enables {kib} 
+to act as a proxy for SSL/TLS authentication and to submit the client
+certificates to {es} for further validation by a PKI realm. See
+<<pki-realm-for-proxied-clients>>.
 
-To use PKI in {es}, you configure a PKI realm, enable client authentication on
-the desired network layers (transport or http), and map the Distinguished Names
-(DNs) from the user certificates to {security} roles in the
-<<mapping-roles, role mapping file>>.
-
-See {ref}/configuring-pki-realm.html[Configuring a PKI realm].
-
-[[pki-settings]]
-==== PKI realm settings
-
-See {ref}/security-settings.html#ref-pki-settings[PKI realm settings].
+include::configuring-pki-realm.asciidoc[]

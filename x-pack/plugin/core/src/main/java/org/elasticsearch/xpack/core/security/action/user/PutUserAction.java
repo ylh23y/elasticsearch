@@ -5,28 +5,17 @@
  */
 package org.elasticsearch.xpack.core.security.action.user;
 
-import org.elasticsearch.action.Action;
-import org.elasticsearch.client.ElasticsearchClient;
+import org.elasticsearch.action.ActionType;
 
 /**
- * Action for putting (adding/updating) a native user.
+ * ActionType for putting (adding/updating) a native user.
  */
-public class PutUserAction extends Action<PutUserRequest, PutUserResponse, PutUserRequestBuilder> {
+public class PutUserAction extends ActionType<PutUserResponse> {
 
     public static final PutUserAction INSTANCE = new PutUserAction();
     public static final String NAME = "cluster:admin/xpack/security/user/put";
 
     protected PutUserAction() {
-        super(NAME);
-    }
-
-    @Override
-    public PutUserRequestBuilder newRequestBuilder(ElasticsearchClient client) {
-        return new PutUserRequestBuilder(client, this);
-    }
-
-    @Override
-    public PutUserResponse newResponse() {
-        return new PutUserResponse();
+        super(NAME, PutUserResponse::new);
     }
 }

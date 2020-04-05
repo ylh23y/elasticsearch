@@ -5,7 +5,7 @@
  */
 package org.elasticsearch.xpack.rollup.action;
 
-import org.elasticsearch.cluster.metadata.MetaData;
+import org.elasticsearch.cluster.metadata.Metadata;
 import org.elasticsearch.test.ESTestCase;
 import org.elasticsearch.xpack.core.rollup.ConfigTestHelpers;
 import org.elasticsearch.xpack.core.rollup.action.RollupJobCaps;
@@ -30,12 +30,12 @@ public class RollupIndexCapsTests extends ESTestCase {
 
     public void testGetAllJobs() {
         List<RollupJobConfig> jobs = new ArrayList<>(2);
-        jobs.add(ConfigTestHelpers.getRollupJob("foo").build());
-        jobs.add(ConfigTestHelpers.getRollupJob("bar").build());
+        jobs.add(ConfigTestHelpers.randomRollupJobConfig(random(), "foo"));
+        jobs.add(ConfigTestHelpers.randomRollupJobConfig(random(), "bar"));
         RollupIndexCaps caps = new RollupIndexCaps(ESTestCase.randomAlphaOfLength(10), jobs);
         assertTrue(caps.hasCaps());
 
-        List<String> jobCaps = caps.getJobCapsByIndexPattern(MetaData.ALL).stream()
+        List<String> jobCaps = caps.getJobCapsByIndexPattern(Metadata.ALL).stream()
                 .map(RollupJobCaps::getJobID)
                 .collect(Collectors.toList());
         assertThat(jobCaps.size(), equalTo(2));
@@ -45,8 +45,8 @@ public class RollupIndexCapsTests extends ESTestCase {
 
     public void testFilterGetJobs() {
         List<RollupJobConfig> jobs = new ArrayList<>(2);
-        jobs.add(ConfigTestHelpers.getRollupJob("foo").setIndexPattern("foo_index_pattern").build());
-        jobs.add(ConfigTestHelpers.getRollupJob("bar").build());
+        jobs.add(ConfigTestHelpers.randomRollupJobConfig(random(), "foo", "foo_index_pattern"));
+        jobs.add(ConfigTestHelpers.randomRollupJobConfig(random(), "bar"));
         RollupIndexCaps caps = new RollupIndexCaps(ESTestCase.randomAlphaOfLength(10), jobs);
         assertTrue(caps.hasCaps());
 

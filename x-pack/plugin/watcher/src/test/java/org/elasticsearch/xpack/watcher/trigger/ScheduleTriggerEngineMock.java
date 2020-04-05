@@ -5,39 +5,39 @@
  */
 package org.elasticsearch.xpack.watcher.trigger;
 
+import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
-import org.elasticsearch.common.logging.Loggers;
-import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.common.unit.TimeValue;
 import org.elasticsearch.common.xcontent.XContentParser;
-import org.elasticsearch.xpack.core.watcher.common.stats.Counters;
 import org.elasticsearch.xpack.core.watcher.watch.ClockMock;
 import org.elasticsearch.xpack.core.watcher.watch.Watch;
 import org.elasticsearch.xpack.watcher.trigger.schedule.ScheduleRegistry;
 import org.elasticsearch.xpack.watcher.trigger.schedule.ScheduleTrigger;
 import org.elasticsearch.xpack.watcher.trigger.schedule.ScheduleTriggerEngine;
 import org.elasticsearch.xpack.watcher.trigger.schedule.ScheduleTriggerEvent;
-import org.joda.time.DateTime;
 
 import java.io.IOException;
 import java.time.Clock;
+import java.time.ZonedDateTime;
 import java.util.Collection;
 import java.util.Collections;
+import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ConcurrentMap;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * A mock scheduler to help with unit testing. Provide {@link ScheduleTriggerEngineMock#trigger} method to manually trigger
  * jobCount.
  */
 public class ScheduleTriggerEngineMock extends ScheduleTriggerEngine {
+    private static final Logger logger = LogManager.getLogger(ScheduleTriggerEngineMock.class);
 
-    private final Logger logger;
-    private final ConcurrentMap<String, Watch> watches = new ConcurrentHashMap<>();
+    private final AtomicReference<Map<String, Watch>> watches = new AtomicReference<>(new ConcurrentHashMap<>());
+    private final AtomicBoolean paused = new AtomicBoolean(false);
 
-    public ScheduleTriggerEngineMock(Settings settings, ScheduleRegistry scheduleRegistry, Clock clock) {
-        super(settings, scheduleRegistry, clock);
-        this.logger = Loggers.getLogger(ScheduleTriggerEngineMock.class, settings);
+    public ScheduleTriggerEngineMock(ScheduleRegistry scheduleRegistry, Clock clock) {
+        super(scheduleRegistry, clock);
     }
 
     @Override
@@ -52,55 +52,53 @@ public class ScheduleTriggerEngineMock extends ScheduleTriggerEngine {
     }
 
     @Override
-    public void start(Collection<Watch> jobs) {
+    public synchronized void start(Collection<Watch> jobs) {
+        Map<String, Watch> newWatches = new ConcurrentHashMap<>();
+        jobs.forEach((watch) -> newWatches.put(watch.id(), watch));
+        watches.set(newWatches);
+        paused.set(false);
     }
 
     @Override
     public void stop() {
-        watches.clear();
+        watches.set(new ConcurrentHashMap<>());
     }
 
     @Override
-    public void add(Watch watch) {
+    public synchronized void add(Watch watch) {
         logger.debug("adding watch [{}]", watch.id());
-        watches.put(watch.id(), watch);
+        watches.get().put(watch.id(), watch);
     }
 
     @Override
     public void pauseExecution() {
-        watches.clear();
+        paused.set(true);
     }
 
     @Override
-    public int getJobCount() {
-        return watches.size();
+    public synchronized boolean remove(String jobId) {
+        return watches.get().remove(jobId) != null;
     }
 
-    @Override
-    public boolean remove(String jobId) {
-        return watches.remove(jobId) != null;
+    public boolean trigger(String jobName) {
+        return trigger(jobName, 1, null);
     }
 
-    public void trigger(String jobName) {
-        trigger(jobName, 1, null);
-    }
-
-    public void trigger(String jobName, int times) {
-        trigger(jobName, times, null);
-    }
-
-    public void trigger(String jobName, int times, TimeValue interval) {
-        if (watches.containsKey(jobName) == false) {
-            logger.trace("not executing job [{}], not found", jobName);
-            return;
+    public boolean trigger(String jobName, int times, TimeValue interval) {
+        if (watches.get().containsKey(jobName) == false) {
+            return false;
+        }
+        if (paused.get()) {
+            logger.info("not executing watch [{}] on this scheduler because it is paused", jobName);
+            return false;
         }
 
         for (int i = 0; i < times; i++) {
-            DateTime now = new DateTime(clock.millis());
+            ZonedDateTime now = ZonedDateTime.now(clock);
             logger.debug("firing watch [{}] at [{}]", jobName, now);
             ScheduleTriggerEvent event = new ScheduleTriggerEvent(jobName, now, now);
             consumers.forEach(consumer -> consumer.accept(Collections.singletonList(event)));
-            if (interval != null)  {
+            if (interval != null) {
                 if (clock instanceof ClockMock) {
                     ((ClockMock) clock).fastForward(interval);
                 } else {
@@ -112,5 +110,7 @@ public class ScheduleTriggerEngineMock extends ScheduleTriggerEngine {
                 }
             }
         }
+
+        return true;
     }
 }

@@ -32,8 +32,8 @@ import java.util.Map;
 public class UnmappedSampler extends InternalSampler {
     public static final String NAME = "unmapped_sampler";
 
-    UnmappedSampler(String name, List<PipelineAggregator> pipelineAggregators, Map<String, Object> metaData) {
-        super(name, 0, InternalAggregations.EMPTY, pipelineAggregators, metaData);
+    UnmappedSampler(String name, List<PipelineAggregator> pipelineAggregators, Map<String, Object> metadata) {
+        super(name, 0, InternalAggregations.EMPTY, pipelineAggregators, metadata);
     }
 
     /**
@@ -49,13 +49,13 @@ public class UnmappedSampler extends InternalSampler {
     }
 
     @Override
-    public InternalAggregation doReduce(List<InternalAggregation> aggregations, ReduceContext reduceContext) {
-        for (InternalAggregation agg : aggregations) {
-            if (!(agg instanceof UnmappedSampler)) {
-                return agg.reduce(aggregations, reduceContext);
-            }
-        }
-        return this;
+    public InternalAggregation reduce(List<InternalAggregation> aggregations, ReduceContext reduceContext) {
+        return new UnmappedSampler(name, pipelineAggregators(), metadata);
+    }
+
+    @Override
+    public boolean isMapped() {
+        return false;
     }
 
     @Override

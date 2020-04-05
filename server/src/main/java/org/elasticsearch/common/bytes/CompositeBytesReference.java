@@ -34,7 +34,7 @@ import java.util.Objects;
  *
  * Note, {@link #toBytesRef()} will materialize all pages in this BytesReference.
  */
-public final class CompositeBytesReference extends BytesReference {
+public final class CompositeBytesReference extends AbstractBytesReference {
 
     private final BytesReference[] references;
     private final int[] offsets;
@@ -71,16 +71,50 @@ public final class CompositeBytesReference extends BytesReference {
     }
 
     @Override
+    public int indexOf(byte marker, int from) {
+        final int remainingBytes = Math.max(length - from, 0);
+        Objects.checkFromIndexSize(from, remainingBytes, length);
+
+        int result = -1;
+        if (length == 0) {
+            return result;
+        }
+
+        final int firstReferenceIndex = getOffsetIndex(from);
+        for (int i = firstReferenceIndex; i < references.length; ++i) {
+            final BytesReference reference = references[i];
+            final int internalFrom;
+            if (i == firstReferenceIndex) {
+                internalFrom = from - offsets[firstReferenceIndex];
+            } else {
+                internalFrom = 0;
+            }
+            result = reference.indexOf(marker, internalFrom);
+            if (result != -1) {
+                result += offsets[i];
+                break;
+            }
+        }
+        return result;
+    }
+
+    @Override
     public int length() {
         return length;
     }
 
     @Override
     public BytesReference slice(int from, int length) {
+        Objects.checkFromIndexSize(from, length, this.length);
+
+        if (length == 0) {
+            return BytesArray.EMPTY;
+        }
+
         // for slices we only need to find the start and the end reference
         // adjust them and pass on the references in between as they are fully contained
         final int to = from + length;
-        final int limit = getOffsetIndex(from + length);
+        final int limit = getOffsetIndex(to - 1);
         final int start = getOffsetIndex(from);
         final BytesReference[] inSlice = new BytesReference[1 + (limit - start)];
         for (int i = 0, j = start; i < inSlice.length; i++) {

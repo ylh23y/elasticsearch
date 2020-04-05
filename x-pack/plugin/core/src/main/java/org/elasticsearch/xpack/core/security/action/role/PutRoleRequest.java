@@ -14,13 +14,20 @@ import org.elasticsearch.common.bytes.BytesReference;
 import org.elasticsearch.common.io.stream.StreamInput;
 import org.elasticsearch.common.io.stream.StreamOutput;
 import org.elasticsearch.xpack.core.security.authz.RoleDescriptor;
+import org.elasticsearch.xpack.core.security.authz.privilege.ApplicationPrivilege;
+import org.elasticsearch.xpack.core.security.authz.privilege.ClusterPrivilegeResolver;
+import org.elasticsearch.xpack.core.security.authz.privilege.ConfigurableClusterPrivilege;
+import org.elasticsearch.xpack.core.security.authz.privilege.ConfigurableClusterPrivileges;
+import org.elasticsearch.xpack.core.security.authz.privilege.IndexPrivilege;
 import org.elasticsearch.xpack.core.security.support.MetadataUtils;
 
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 import static org.elasticsearch.action.ValidateActions.addValidationError;
 
@@ -31,11 +38,29 @@ public class PutRoleRequest extends ActionRequest implements WriteRequest<PutRol
 
     private String name;
     private String[] clusterPrivileges = Strings.EMPTY_ARRAY;
+    private ConfigurableClusterPrivilege[] configurableClusterPrivileges = ConfigurableClusterPrivileges.EMPTY_ARRAY;
     private List<RoleDescriptor.IndicesPrivileges> indicesPrivileges = new ArrayList<>();
+    private List<RoleDescriptor.ApplicationResourcePrivileges> applicationPrivileges = new ArrayList<>();
     private String[] runAs = Strings.EMPTY_ARRAY;
     private RefreshPolicy refreshPolicy = RefreshPolicy.IMMEDIATE;
     private Map<String, Object> metadata;
-    
+
+    public PutRoleRequest(StreamInput in) throws IOException {
+        super(in);
+        name = in.readString();
+        clusterPrivileges = in.readStringArray();
+        int indicesSize = in.readVInt();
+        indicesPrivileges = new ArrayList<>(indicesSize);
+        for (int i = 0; i < indicesSize; i++) {
+            indicesPrivileges.add(new RoleDescriptor.IndicesPrivileges(in));
+        }
+        applicationPrivileges = in.readList(RoleDescriptor.ApplicationResourcePrivileges::new);
+        configurableClusterPrivileges = ConfigurableClusterPrivileges.readArray(in);
+        runAs = in.readStringArray();
+        refreshPolicy = RefreshPolicy.readFrom(in);
+        metadata = in.readMap();
+    }
+
     public PutRoleRequest() {
     }
 
@@ -45,9 +70,43 @@ public class PutRoleRequest extends ActionRequest implements WriteRequest<PutRol
         if (name == null) {
             validationException = addValidationError("role name is missing", validationException);
         }
+        if (clusterPrivileges != null) {
+            for (String cp : clusterPrivileges) {
+                try {
+                    ClusterPrivilegeResolver.resolve(cp);
+                } catch (IllegalArgumentException ile) {
+                    validationException = addValidationError(ile.getMessage(), validationException);
+                }
+            }
+        }
+        if (indicesPrivileges != null) {
+            for (RoleDescriptor.IndicesPrivileges idp : indicesPrivileges) {
+                try {
+                    IndexPrivilege.get(Set.of(idp.getPrivileges()));
+                } catch (IllegalArgumentException ile) {
+                    validationException = addValidationError(ile.getMessage(), validationException);
+                }
+            }
+        }
+        if(applicationPrivileges != null) {
+            for (RoleDescriptor.ApplicationResourcePrivileges privilege : applicationPrivileges) {
+                try {
+                    ApplicationPrivilege.validateApplicationNameOrWildcard(privilege.getApplication());
+                } catch (IllegalArgumentException e) {
+                    validationException = addValidationError(e.getMessage(), validationException);
+                }
+                for (String name : privilege.getPrivileges()) {
+                    try {
+                        ApplicationPrivilege.validatePrivilegeOrActionName(name);
+                    } catch (IllegalArgumentException e) {
+                        validationException = addValidationError(e.getMessage(), validationException);
+                    }
+                }
+            }
+        }
         if (metadata != null && MetadataUtils.containsReservedMetadata(metadata)) {
             validationException =
-                    addValidationError("metadata keys may not start with [" + MetadataUtils.RESERVED_PREFIX + "]", validationException);
+                addValidationError("metadata keys may not start with [" + MetadataUtils.RESERVED_PREFIX + "]", validationException);
         }
         return validationException;
     }
@@ -60,19 +119,28 @@ public class PutRoleRequest extends ActionRequest implements WriteRequest<PutRol
         this.clusterPrivileges = clusterPrivileges;
     }
 
+    void conditionalCluster(ConfigurableClusterPrivilege... configurableClusterPrivileges) {
+        this.configurableClusterPrivileges = configurableClusterPrivileges;
+    }
+
     void addIndex(RoleDescriptor.IndicesPrivileges... privileges) {
         this.indicesPrivileges.addAll(Arrays.asList(privileges));
     }
 
     public void addIndex(String[] indices, String[] privileges, String[] grantedFields, String[] deniedFields,
-                         @Nullable BytesReference query) {
+                         @Nullable BytesReference query, boolean allowRestrictedIndices) {
         this.indicesPrivileges.add(RoleDescriptor.IndicesPrivileges.builder()
                 .indices(indices)
                 .privileges(privileges)
                 .grantedFields(grantedFields)
                 .deniedFields(deniedFields)
                 .query(query)
+                .allowRestrictedIndices(allowRestrictedIndices)
                 .build());
+    }
+
+    void addApplicationPrivileges(RoleDescriptor.ApplicationResourcePrivileges... privileges) {
+        this.applicationPrivileges.addAll(Arrays.asList(privileges));
     }
 
     public void runAs(String... usernames) {
@@ -110,27 +178,20 @@ public class PutRoleRequest extends ActionRequest implements WriteRequest<PutRol
         return indicesPrivileges.toArray(new RoleDescriptor.IndicesPrivileges[indicesPrivileges.size()]);
     }
 
+    public List<RoleDescriptor.ApplicationResourcePrivileges> applicationPrivileges() {
+        return Collections.unmodifiableList(applicationPrivileges);
+    }
+
+    public ConfigurableClusterPrivilege[] conditionalClusterPrivileges() {
+        return configurableClusterPrivileges;
+    }
+
     public String[] runAs() {
         return runAs;
     }
 
     public Map<String, Object> metadata() {
         return metadata;
-    }
-
-    @Override
-    public void readFrom(StreamInput in) throws IOException {
-        super.readFrom(in);
-        name = in.readString();
-        clusterPrivileges = in.readStringArray();
-        int indicesSize = in.readVInt();
-        indicesPrivileges = new ArrayList<>(indicesSize);
-        for (int i = 0; i < indicesSize; i++) {
-            indicesPrivileges.add(RoleDescriptor.IndicesPrivileges.createFrom(in));
-        }
-        runAs = in.readStringArray();
-        refreshPolicy = RefreshPolicy.readFrom(in);
-        metadata = in.readMap();
     }
 
     @Override
@@ -142,6 +203,8 @@ public class PutRoleRequest extends ActionRequest implements WriteRequest<PutRol
         for (RoleDescriptor.IndicesPrivileges index : indicesPrivileges) {
             index.writeTo(out);
         }
+        out.writeList(applicationPrivileges);
+        ConfigurableClusterPrivileges.writeArray(out, this.configurableClusterPrivileges);
         out.writeStringArray(runAs);
         refreshPolicy.writeTo(out);
         out.writeMap(metadata);
@@ -151,7 +214,11 @@ public class PutRoleRequest extends ActionRequest implements WriteRequest<PutRol
         return new RoleDescriptor(name,
                 clusterPrivileges,
                 indicesPrivileges.toArray(new RoleDescriptor.IndicesPrivileges[indicesPrivileges.size()]),
+                applicationPrivileges.toArray(new RoleDescriptor.ApplicationResourcePrivileges[applicationPrivileges.size()]),
+            configurableClusterPrivileges,
                 runAs,
-                metadata);
+                metadata,
+                Collections.emptyMap());
     }
+
 }

@@ -5,10 +5,10 @@
  */
 package org.elasticsearch.xpack.core.ml.action;
 
-import org.elasticsearch.action.Action;
 import org.elasticsearch.action.ActionRequest;
 import org.elasticsearch.action.ActionRequestBuilder;
 import org.elasticsearch.action.ActionRequestValidationException;
+import org.elasticsearch.action.ActionType;
 import org.elasticsearch.action.support.master.AcknowledgedResponse;
 import org.elasticsearch.client.ElasticsearchClient;
 import org.elasticsearch.common.io.stream.StreamInput;
@@ -21,27 +21,16 @@ import org.elasticsearch.xpack.core.ml.job.config.Detector;
 import java.io.IOException;
 import java.util.Objects;
 
-public class ValidateDetectorAction
-extends Action<ValidateDetectorAction.Request, ValidateDetectorAction.Response, ValidateDetectorAction.RequestBuilder> {
+public class ValidateDetectorAction extends ActionType<AcknowledgedResponse> {
 
     public static final ValidateDetectorAction INSTANCE = new ValidateDetectorAction();
     public static final String NAME = "cluster:admin/xpack/ml/job/validate/detector";
 
     protected ValidateDetectorAction() {
-        super(NAME);
+        super(NAME, AcknowledgedResponse::new);
     }
 
-    @Override
-    public RequestBuilder newRequestBuilder(ElasticsearchClient client) {
-        return new RequestBuilder(client, INSTANCE);
-    }
-
-    @Override
-    public Response newResponse() {
-        return new Response();
-    }
-
-    public static class RequestBuilder extends ActionRequestBuilder<Request, Response, RequestBuilder> {
+    public static class RequestBuilder extends ActionRequestBuilder<Request, AcknowledgedResponse> {
 
         protected RequestBuilder(ElasticsearchClient client, ValidateDetectorAction action) {
             super(client, action, new Request());
@@ -54,7 +43,7 @@ extends Action<ValidateDetectorAction.Request, ValidateDetectorAction.Response, 
         private Detector detector;
 
         public static Request parseRequest(XContentParser parser) {
-            Detector detector = Detector.CONFIG_PARSER.apply(parser, null).build();
+            Detector detector = Detector.STRICT_PARSER.apply(parser, null).build();
             return new Request(detector);
         }
 
@@ -64,6 +53,11 @@ extends Action<ValidateDetectorAction.Request, ValidateDetectorAction.Response, 
 
         public Request(Detector detector) {
             this.detector = detector;
+        }
+
+        public Request(StreamInput in) throws IOException {
+            super(in);
+            detector = new Detector(in);
         }
 
         public Detector getDetector() {
@@ -79,12 +73,6 @@ extends Action<ValidateDetectorAction.Request, ValidateDetectorAction.Response, 
         public void writeTo(StreamOutput out) throws IOException {
             super.writeTo(out);
             detector.writeTo(out);
-        }
-
-        @Override
-        public void readFrom(StreamInput in) throws IOException {
-            super.readFrom(in);
-            detector = new Detector(in);
         }
 
         @Override
@@ -111,28 +99,4 @@ extends Action<ValidateDetectorAction.Request, ValidateDetectorAction.Response, 
         }
 
     }
-
-    public static class Response extends AcknowledgedResponse {
-
-        public Response() {
-            super();
-        }
-
-        public Response(boolean acknowledged) {
-            super(acknowledged);
-        }
-
-        @Override
-        public void readFrom(StreamInput in) throws IOException {
-            super.readFrom(in);
-            readAcknowledged(in);
-        }
-
-        @Override
-        public void writeTo(StreamOutput out) throws IOException {
-            super.writeTo(out);
-            writeAcknowledged(out);
-        }
-    }
-
 }

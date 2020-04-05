@@ -20,7 +20,7 @@
 package org.elasticsearch.index;
 
 import org.elasticsearch.Version;
-import org.elasticsearch.cluster.metadata.IndexMetaData;
+import org.elasticsearch.cluster.metadata.IndexMetadata;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.search.MultiValueMode;
 import org.elasticsearch.search.sort.SortOrder;
@@ -43,7 +43,7 @@ public class IndexSortSettingsTests extends ESTestCase {
         if (version != null) {
             newSettings = Settings.builder()
                 .put(settings)
-                .put(IndexMetaData.SETTING_VERSION_CREATED, version)
+                .put(IndexMetadata.SETTING_VERSION_CREATED, version)
                 .build();
         } else {
             newSettings = settings;
@@ -145,16 +145,5 @@ public class IndexSortSettingsTests extends ESTestCase {
             expectThrows(IllegalArgumentException.class, () -> indexSettings(settings));
         assertThat(exc.getMessage(), containsString("Illegal missing value:[default]," +
             " must be one of [_last, _first]"));
-    }
-
-    public void testInvalidVersion() throws IOException {
-        final Settings settings = Settings.builder()
-            .put("index.sort.field", "field1")
-            .build();
-        IllegalArgumentException exc =
-            expectThrows(IllegalArgumentException.class, () -> indexSettings(settings, Version.V_5_4_0));
-        assertThat(exc.getMessage(),
-            containsString("unsupported index.version.created:5.4.0, " +
-                "can't set index.sort on versions prior to 6.0.0-alpha1"));
     }
 }

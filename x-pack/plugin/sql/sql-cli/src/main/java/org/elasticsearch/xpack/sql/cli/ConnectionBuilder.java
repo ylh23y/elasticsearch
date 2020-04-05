@@ -8,7 +8,7 @@ package org.elasticsearch.xpack.sql.cli;
 import org.elasticsearch.cli.ExitCodes;
 import org.elasticsearch.cli.SuppressForbidden;
 import org.elasticsearch.cli.UserException;
-import org.elasticsearch.xpack.sql.client.shared.ConnectionConfiguration;
+import org.elasticsearch.xpack.sql.client.ConnectionConfiguration;
 
 import java.net.URI;
 import java.nio.file.Files;
@@ -16,8 +16,8 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.Properties;
 
-import static org.elasticsearch.xpack.sql.client.shared.UriUtils.parseURI;
-import static org.elasticsearch.xpack.sql.client.shared.UriUtils.removeQuery;
+import static org.elasticsearch.xpack.sql.client.UriUtils.parseURI;
+import static org.elasticsearch.xpack.sql.client.UriUtils.removeQuery;
 
 /**
  * Connection Builder. Can interactively ask users for the password if it is not provided
@@ -37,9 +37,11 @@ public class ConnectionBuilder {
      *
      * @param connectionStringArg the connection string to connect to
      * @param keystoreLocation    the location of the keystore to configure. If null then use the system keystore.
+     * @param binaryCommunication should the communication between the CLI and server be binary (CBOR)
      * @throws UserException if there is a problem with the information provided by the user
      */
-    public ConnectionConfiguration buildConnection(String connectionStringArg, String keystoreLocation) throws UserException {
+    public ConnectionConfiguration buildConnection(String connectionStringArg, String keystoreLocation,
+                                                   boolean binaryCommunication) throws UserException {
         final URI uri;
         final String connectionString;
         Properties properties = new Properties();
@@ -91,6 +93,8 @@ public class ConnectionBuilder {
             properties.setProperty(ConnectionConfiguration.AUTH_USER, user);
             properties.setProperty(ConnectionConfiguration.AUTH_PASS, password);
         }
+        
+        properties.setProperty(ConnectionConfiguration.BINARY_COMMUNICATION, Boolean.toString(binaryCommunication));
 
         return newConnectionConfiguration(uri, connectionString, properties);
     }

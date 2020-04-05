@@ -19,34 +19,70 @@
 
 package org.elasticsearch.action.admin.indices.mapping.get;
 
-import org.elasticsearch.action.admin.indices.mapping.get.GetFieldMappingsResponse.FieldMappingMetaData;
+import org.elasticsearch.action.admin.indices.mapping.get.GetFieldMappingsResponse.FieldMappingMetadata;
+import org.elasticsearch.common.Strings;
 import org.elasticsearch.common.bytes.BytesArray;
 import org.elasticsearch.common.io.stream.BytesStreamOutput;
 import org.elasticsearch.common.io.stream.StreamInput;
-import org.elasticsearch.test.ESTestCase;
+import org.elasticsearch.common.io.stream.Writeable;
+import org.elasticsearch.test.AbstractWireSerializingTestCase;
 
 import java.io.IOException;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
 
-public class GetFieldMappingsResponseTests extends ESTestCase {
+public class GetFieldMappingsResponseTests extends AbstractWireSerializingTestCase<GetFieldMappingsResponse> {
 
-    public void testSerialization() throws IOException {
-        Map<String, Map<String, Map<String, FieldMappingMetaData>>> mappings = new HashMap<>();
-        FieldMappingMetaData fieldMappingMetaData = new FieldMappingMetaData("my field", new BytesArray("{}"));
-        mappings.put("index", Collections.singletonMap("type", Collections.singletonMap("field", fieldMappingMetaData)));
+    public void testManualSerialization() throws IOException {
+        Map<String, Map<String, FieldMappingMetadata>> mappings = new HashMap<>();
+        FieldMappingMetadata fieldMappingMetadata = new FieldMappingMetadata("my field", new BytesArray("{}"));
+        mappings.put("index", Collections.singletonMap("field", fieldMappingMetadata));
         GetFieldMappingsResponse response = new GetFieldMappingsResponse(mappings);
 
         try (BytesStreamOutput out = new BytesStreamOutput()) {
             response.writeTo(out);
-            GetFieldMappingsResponse serialized = new GetFieldMappingsResponse();
             try (StreamInput in = StreamInput.wrap(out.bytes().toBytesRef().bytes)) {
-                serialized.readFrom(in);
-                FieldMappingMetaData metaData = serialized.fieldMappings("index", "type", "field");
-                assertNotNull(metaData);
-                assertEquals(new BytesArray("{}"), metaData.getSource());
+                GetFieldMappingsResponse serialized = new GetFieldMappingsResponse(in);
+                FieldMappingMetadata metadata = serialized.fieldMappings("index", "field");
+                assertNotNull(metadata);
+                assertEquals(new BytesArray("{}"), metadata.getSource());
             }
         }
+    }
+
+    public void testNullFieldMappingToXContent() {
+        Map<String, Map<String, FieldMappingMetadata>> mappings = new HashMap<>();
+        mappings.put("index", Collections.emptyMap());
+        GetFieldMappingsResponse response = new GetFieldMappingsResponse(mappings);
+        assertEquals("{\"index\":{\"mappings\":{}}}", Strings.toString(response));
+    }
+
+    @Override
+    protected GetFieldMappingsResponse createTestInstance() {
+        return new GetFieldMappingsResponse(randomMapping());
+    }
+
+    @Override
+    protected Writeable.Reader<GetFieldMappingsResponse> instanceReader() {
+        return GetFieldMappingsResponse::new;
+    }
+
+    private Map<String, Map<String, FieldMappingMetadata>> randomMapping() {
+        Map<String, Map<String, FieldMappingMetadata>> mappings = new HashMap<>();
+
+        int indices = randomInt(10);
+        for(int i = 0; i < indices; i++) {
+            Map<String, FieldMappingMetadata> fieldMappings = new HashMap<>();
+            int fields = randomInt(10);
+            for (int k = 0; k < fields; k++) {
+                final String mapping = randomBoolean() ? "{\"type\":\"string\"}" : "{\"type\":\"keyword\"}";
+                FieldMappingMetadata metadata =
+                    new FieldMappingMetadata("my field", new BytesArray(mapping));
+                fieldMappings.put("field" + k, metadata);
+            }
+            mappings.put("index" + i, fieldMappings);
+        }
+        return mappings;
     }
 }

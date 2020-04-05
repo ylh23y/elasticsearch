@@ -23,7 +23,6 @@ import org.apache.lucene.store.BufferedChecksum;
 import org.elasticsearch.common.io.stream.FilterStreamInput;
 import org.elasticsearch.common.io.stream.StreamInput;
 
-import java.io.EOFException;
 import java.io.IOException;
 import java.util.zip.CRC32;
 import java.util.zip.Checksum;
@@ -36,14 +35,11 @@ public final class BufferedChecksumStreamInput extends FilterStreamInput {
     private static final int SKIP_BUFFER_SIZE = 1024;
     private byte[] skipBuffer;
     private final Checksum digest;
+    private final String source;
 
-    public BufferedChecksumStreamInput(StreamInput in) {
+    public BufferedChecksumStreamInput(StreamInput in, String source, BufferedChecksumStreamInput reuse) {
         super(in);
-        this.digest = new BufferedChecksum(new CRC32());
-    }
-
-    public BufferedChecksumStreamInput(StreamInput in, BufferedChecksumStreamInput reuse) {
-        super(in);
+        this.source = source;
         if (reuse == null ) {
             this.digest = new BufferedChecksum(new CRC32());
         } else {
@@ -51,6 +47,10 @@ public final class BufferedChecksumStreamInput extends FilterStreamInput {
             digest.reset();
             this.skipBuffer = reuse.skipBuffer;
         }
+    }
+
+    public BufferedChecksumStreamInput(StreamInput in, String source) {
+        this(in, source, null);
     }
 
     public long getChecksum() {
@@ -70,6 +70,30 @@ public final class BufferedChecksumStreamInput extends FilterStreamInput {
         digest.update(b, offset, len);
     }
 
+    private static final ThreadLocal<byte[]> buffer = ThreadLocal.withInitial(() -> new byte[8]);
+
+    @Override
+    public short readShort() throws IOException {
+        final byte[] buf = buffer.get();
+        readBytes(buf, 0, 2);
+        return (short) (((buf[0] & 0xFF) << 8) | (buf[1] & 0xFF));
+    }
+
+    @Override
+    public int readInt() throws IOException {
+        final byte[] buf = buffer.get();
+        readBytes(buf, 0, 4);
+        return ((buf[0] & 0xFF) << 24) | ((buf[1] & 0xFF) << 16) | ((buf[2] & 0xFF) << 8) | (buf[3] & 0xFF);
+    }
+
+    @Override
+    public long readLong() throws IOException {
+        final byte[] buf = buffer.get();
+        readBytes(buf, 0, 8);
+        return (((long) (((buf[0] & 0xFF) << 24) | ((buf[1] & 0xFF) << 16) | ((buf[2] & 0xFF) << 8) | (buf[3] & 0xFF))) << 32)
+            | ((((buf[4] & 0xFF) << 24) | ((buf[5] & 0xFF) << 16) | ((buf[6] & 0xFF) << 8) | (buf[7] & 0xFF)) & 0xFFFFFFFFL);
+    }
+
     @Override
     public void reset() throws IOException {
         delegate.reset();
@@ -85,7 +109,6 @@ public final class BufferedChecksumStreamInput extends FilterStreamInput {
     public boolean markSupported() {
         return delegate.markSupported();
     }
-
 
     @Override
     public long skip(long numBytes) throws IOException {
@@ -105,7 +128,6 @@ public final class BufferedChecksumStreamInput extends FilterStreamInput {
         return skipped;
     }
 
-
     @Override
     public synchronized void mark(int readlimit) {
         delegate.mark(readlimit);
@@ -115,4 +137,7 @@ public final class BufferedChecksumStreamInput extends FilterStreamInput {
         digest.reset();
     }
 
+    public String getSource(){
+        return source;
+    }
 }

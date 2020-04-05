@@ -12,7 +12,6 @@ import org.elasticsearch.common.settings.SecureString;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.index.query.QueryBuilders;
 import org.elasticsearch.xpack.core.XPackSettings;
-import org.elasticsearch.xpack.core.security.authc.support.Hasher;
 import org.elasticsearch.test.SecurityIntegTestCase;
 
 import java.util.ArrayList;
@@ -27,7 +26,6 @@ import static org.hamcrest.Matchers.equalTo;
 public class DocumentLevelSecurityRandomTests extends SecurityIntegTestCase {
 
     protected static final SecureString USERS_PASSWD = new SecureString("change_me".toCharArray());
-    protected static final String USERS_PASSWD_HASHED = new String(Hasher.BCRYPT.hash(new SecureString("change_me".toCharArray())));
 
     // can't add a second test method, because each test run creates a new instance of this class and that will will result
     // in a new random value:
@@ -35,9 +33,11 @@ public class DocumentLevelSecurityRandomTests extends SecurityIntegTestCase {
 
     @Override
     protected String configUsers() {
+        final String usersPasswdHashed = new String(getFastStoredHashAlgoForTests().hash(USERS_PASSWD));
+
         StringBuilder builder = new StringBuilder(super.configUsers());
         for (int i = 1; i <= numberOfRoles; i++) {
-            builder.append("user").append(i).append(':').append(USERS_PASSWD_HASHED).append('\n');
+            builder.append("user").append(i).append(':').append(usersPasswdHashed).append('\n');
         }
         return builder.toString();
     }
@@ -91,14 +91,14 @@ public class DocumentLevelSecurityRandomTests extends SecurityIntegTestCase {
 
     public void testDuelWithAliasFilters() throws Exception {
         assertAcked(client().admin().indices().prepareCreate("test")
-                        .addMapping("type1", "field1", "type=text", "field2", "type=text")
+                        .setMapping("field1", "type=text", "field2", "type=text")
         );
 
         List<IndexRequestBuilder> requests = new ArrayList<>(numberOfRoles);
         IndicesAliasesRequestBuilder builder = client().admin().indices().prepareAliases();
         for (int i = 1; i <= numberOfRoles; i++) {
             String value = "value" + i;
-            requests.add(client().prepareIndex("test", "type1", value).setSource("field1", value));
+            requests.add(client().prepareIndex("test").setId(value).setSource("field1", value));
             builder.addAlias("test", "alias" + i, QueryBuilders.termQuery("field1", value));
         }
         indexRandom(true, requests);
@@ -110,7 +110,7 @@ public class DocumentLevelSecurityRandomTests extends SecurityIntegTestCase {
                     .prepareSearch("test")
                     .get();
             SearchResponse searchResponse2 = client().prepareSearch("alias" + roleI).get();
-            assertThat(searchResponse1.getHits().getTotalHits(), equalTo(searchResponse2.getHits().getTotalHits()));
+            assertThat(searchResponse1.getHits().getTotalHits().value, equalTo(searchResponse2.getHits().getTotalHits().value));
             for (int hitI = 0; hitI < searchResponse1.getHits().getHits().length; hitI++) {
                 assertThat(searchResponse1.getHits().getAt(hitI).getId(), equalTo(searchResponse2.getHits().getAt(hitI).getId()));
             }

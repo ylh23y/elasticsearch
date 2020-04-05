@@ -10,48 +10,11 @@ import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.test.ESTestCase;
 import org.elasticsearch.xpack.watcher.Watcher;
 
-import static org.hamcrest.Matchers.contains;
-import static org.hamcrest.Matchers.containsInAnyOrder;
 import static org.hamcrest.Matchers.equalTo;
 import static org.hamcrest.Matchers.hasItem;
 
 
 public class HtmlSanitizerTests extends ESTestCase {
-    public void testDefaultWithTemplatePlaceholders() {
-        String blockTag = randomFrom(HtmlSanitizer.BLOCK_TAGS);
-        while (blockTag.equals("li")) {
-            blockTag = randomFrom(HtmlSanitizer.BLOCK_TAGS);
-        }
-        String html =
-                "<html>" +
-                        "<head></head>" +
-                        "<body>" +
-                        "<" + blockTag + ">Hello {{ctx.metadata.name}}</" + blockTag + ">" +
-                        "<ul><li>item1</li></ul>" +
-                        "<ol><li>item2</li></ol>" +
-                        "meta <a href='https://www.google.com/search?q={{ctx.metadata.name}}'>Testlink</a> meta" +
-                        "</body>" +
-                        "</html>";
-        HtmlSanitizer sanitizer = new HtmlSanitizer(Settings.EMPTY);
-        String sanitizedHtml = sanitizer.sanitize(html);
-        if (blockTag.equals("ol") || blockTag.equals("ul")) {
-            assertThat(sanitizedHtml, equalTo(
-                    "<head></head><body>" +
-                            "<" + blockTag + "><li>Hello {{ctx.metadata.name}}</li></" + blockTag + ">" +
-                            "<ul><li>item1</li></ul>" +
-                            "<ol><li>item2</li></ol>" +
-                            "meta <a href=\"https://www.google.com/search?q&#61;{{ctx.metadata.name}}\" rel=\"nofollow\">Testlink</a> " +
-                            "meta</body>"));
-        } else {
-            assertThat(sanitizedHtml, equalTo(
-                    "<head></head><body>" +
-                            "<" + blockTag + ">Hello {{ctx.metadata.name}}</" + blockTag + ">" +
-                            "<ul><li>item1</li></ul>" +
-                            "<ol><li>item2</li></ol>" +
-                            "meta <a href=\"https://www.google.com/search?q&#61;{{ctx.metadata.name}}\" rel=\"nofollow\">Testlink</a> " +
-                            "meta</body>"));
-        }
-    }
 
     public void testDefaultOnClickDisallowed() {
         String badHtml = "<button type=\"button\"" +

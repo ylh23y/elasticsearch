@@ -6,7 +6,6 @@
 package org.elasticsearch.xpack.ml;
 
 import org.elasticsearch.common.settings.Settings;
-import org.elasticsearch.env.Environment;
 import org.elasticsearch.license.XPackLicenseState;
 import org.elasticsearch.monitor.os.OsStats;
 import org.elasticsearch.test.ESTestCase;
@@ -19,6 +18,41 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 public class MachineLearningTests extends ESTestCase {
+
+    public void testMaxOpenWorkersSetting_givenDefault() {
+        int maxOpenWorkers = MachineLearning.MAX_OPEN_JOBS_PER_NODE.get(Settings.EMPTY);
+        assertEquals(20, maxOpenWorkers);
+    }
+
+    public void testMaxOpenWorkersSetting_givenSetting() {
+        Settings.Builder settings = Settings.builder();
+        settings.put(MachineLearning.MAX_OPEN_JOBS_PER_NODE.getKey(), 7);
+        int maxOpenWorkers = MachineLearning.MAX_OPEN_JOBS_PER_NODE.get(settings.build());
+        assertEquals(7, maxOpenWorkers);
+    }
+
+    public void testMaxMachineMemoryPercent_givenDefault() {
+        int maxMachineMemoryPercent = MachineLearning.MAX_MACHINE_MEMORY_PERCENT.get(Settings.EMPTY);
+        assertEquals(30, maxMachineMemoryPercent);
+    }
+
+    public void testMaxMachineMemoryPercent_givenValidSetting() {
+        Settings.Builder settings = Settings.builder();
+        int expectedMaxMachineMemoryPercent = randomIntBetween(5, 200);
+        settings.put(MachineLearning.MAX_MACHINE_MEMORY_PERCENT.getKey(), expectedMaxMachineMemoryPercent);
+        int maxMachineMemoryPercent = MachineLearning.MAX_MACHINE_MEMORY_PERCENT.get(settings.build());
+        assertEquals(expectedMaxMachineMemoryPercent, maxMachineMemoryPercent);
+    }
+
+    public void testMaxMachineMemoryPercent_givenInvalidSetting() {
+        Settings.Builder settings = Settings.builder();
+        int invalidMaxMachineMemoryPercent = randomFrom(4, 201);
+        settings.put(MachineLearning.MAX_MACHINE_MEMORY_PERCENT.getKey(), invalidMaxMachineMemoryPercent);
+        IllegalArgumentException e = expectThrows(IllegalArgumentException.class,
+            () -> MachineLearning.MAX_MACHINE_MEMORY_PERCENT.get(settings.build()));
+        assertThat(e.getMessage(), startsWith("Failed to parse value [" + invalidMaxMachineMemoryPercent
+            + "] for setting [xpack.ml.max_machine_memory_percent] must be"));
+    }
 
     public void testNoAttributes_givenNoClash() {
         Settings.Builder builder = Settings.builder();
@@ -37,13 +71,11 @@ public class MachineLearningTests extends ESTestCase {
     public void testNoAttributes_givenSameAndMlEnabled() {
         Settings.Builder builder = Settings.builder();
         if (randomBoolean()) {
-            builder.put("xpack.ml.enabled", true);
-            builder.put("node.attr.ml.enabled", true);
+            builder.put("xpack.ml.enabled", randomBoolean());
         }
         if (randomBoolean()) {
             int maxOpenJobs = randomIntBetween(5, 15);
             builder.put("xpack.ml.max_open_jobs", maxOpenJobs);
-            builder.put("node.attr.ml.max_open_jobs", maxOpenJobs);
         }
         MachineLearning machineLearning = createMachineLearning(builder.put("path.home", createTempDir()).build());
         assertNotNull(machineLearning.additionalSettings());
@@ -51,16 +83,8 @@ public class MachineLearningTests extends ESTestCase {
 
     public void testNoAttributes_givenClash() {
         Settings.Builder builder = Settings.builder();
-        boolean enabled = true;
         if (randomBoolean()) {
-            enabled = randomBoolean();
-            builder.put("xpack.ml.enabled", enabled);
-        }
-        if (randomBoolean()) {
-            builder.put("xpack.ml.max_open_jobs", randomIntBetween(9, 12));
-        }
-        if (randomBoolean()) {
-            builder.put("node.attr.ml.enabled", !enabled);
+            builder.put("node.attr.ml.enabled", randomBoolean());
         } else {
             builder.put("node.attr.ml.max_open_jobs", randomIntBetween(13, 15));
         }
@@ -73,8 +97,8 @@ public class MachineLearningTests extends ESTestCase {
 
     public void testMachineMemory_givenStatsFailure() throws IOException {
         OsStats stats = mock(OsStats.class);
-        when(stats.getMem()).thenReturn(new OsStats.Mem(-1, -1));
-        assertEquals(-1L, MachineLearning.machineMemoryFromStats(stats));
+        when(stats.getMem()).thenReturn(new OsStats.Mem(0, 0));
+        assertEquals(0L, MachineLearning.machineMemoryFromStats(stats));
     }
 
     public void testMachineMemory_givenNoCgroup() throws IOException {

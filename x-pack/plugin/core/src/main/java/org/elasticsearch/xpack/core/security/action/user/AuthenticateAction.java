@@ -5,25 +5,14 @@
  */
 package org.elasticsearch.xpack.core.security.action.user;
 
-import org.elasticsearch.action.Action;
-import org.elasticsearch.client.ElasticsearchClient;
+import org.elasticsearch.action.ActionType;
 
-public class AuthenticateAction extends Action<AuthenticateRequest, AuthenticateResponse, AuthenticateRequestBuilder> {
+public class AuthenticateAction extends ActionType<AuthenticateResponse> {
 
     public static final String NAME = "cluster:admin/xpack/security/user/authenticate";
     public static final AuthenticateAction INSTANCE = new AuthenticateAction();
 
     public AuthenticateAction() {
-        super(NAME);
-    }
-
-    @Override
-    public AuthenticateRequestBuilder newRequestBuilder(ElasticsearchClient client) {
-        return new AuthenticateRequestBuilder(client);
-    }
-
-    @Override
-    public AuthenticateResponse newResponse() {
-        return new AuthenticateResponse();
+        super(NAME, AuthenticateResponse::new);
     }
 }

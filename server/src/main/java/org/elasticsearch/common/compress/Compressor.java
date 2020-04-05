@@ -20,7 +20,6 @@
 package org.elasticsearch.common.compress;
 
 import org.elasticsearch.common.bytes.BytesReference;
-import org.elasticsearch.common.io.stream.ReleasableBytesStreamOutput;
 import org.elasticsearch.common.io.stream.StreamInput;
 import org.elasticsearch.common.io.stream.StreamOutput;
 
@@ -29,6 +28,8 @@ import java.io.IOException;
 public interface Compressor {
 
     boolean isCompressed(BytesReference bytes);
+
+    int headerLength();
 
     StreamInput streamInput(StreamInput in) throws IOException;
 

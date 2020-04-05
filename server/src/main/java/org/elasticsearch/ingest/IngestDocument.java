@@ -25,7 +25,6 @@ import org.elasticsearch.index.mapper.IdFieldMapper;
 import org.elasticsearch.index.mapper.IndexFieldMapper;
 import org.elasticsearch.index.mapper.RoutingFieldMapper;
 import org.elasticsearch.index.mapper.SourceFieldMapper;
-import org.elasticsearch.index.mapper.TypeFieldMapper;
 import org.elasticsearch.index.mapper.VersionFieldMapper;
 import org.elasticsearch.script.TemplateScript;
 
@@ -34,12 +33,16 @@ import java.time.ZonedDateTime;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Base64;
+import java.util.Collections;
 import java.util.Date;
 import java.util.EnumMap;
 import java.util.HashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
+import java.util.function.BiConsumer;
 
 /**
  * Represents a single document being captured before indexing and holds the source and metadata (like id, type and index).
@@ -55,21 +58,23 @@ public final class IngestDocument {
     private final Map<String, Object> sourceAndMetadata;
     private final Map<String, Object> ingestMetadata;
 
-    public IngestDocument(String index, String type, String id, String routing,
+    // Contains all pipelines that have been executed for this document
+    private final Set<String> executedPipelines = new LinkedHashSet<>();
+
+    public IngestDocument(String index, String id, String routing,
                           Long version, VersionType versionType, Map<String, Object> source) {
         this.sourceAndMetadata = new HashMap<>();
         this.sourceAndMetadata.putAll(source);
-        this.sourceAndMetadata.put(MetaData.INDEX.getFieldName(), index);
-        this.sourceAndMetadata.put(MetaData.TYPE.getFieldName(), type);
-        this.sourceAndMetadata.put(MetaData.ID.getFieldName(), id);
+        this.sourceAndMetadata.put(Metadata.INDEX.getFieldName(), index);
+        this.sourceAndMetadata.put(Metadata.ID.getFieldName(), id);
         if (routing != null) {
-            this.sourceAndMetadata.put(MetaData.ROUTING.getFieldName(), routing);
+            this.sourceAndMetadata.put(Metadata.ROUTING.getFieldName(), routing);
         }
         if (version != null) {
-            sourceAndMetadata.put(MetaData.VERSION.getFieldName(), version);
+            sourceAndMetadata.put(Metadata.VERSION.getFieldName(), version);
         }
         if (versionType != null) {
-            sourceAndMetadata.put(MetaData.VERSION_TYPE.getFieldName(), VersionType.toString(versionType));
+            sourceAndMetadata.put(Metadata.VERSION_TYPE.getFieldName(), VersionType.toString(versionType));
         }
 
         this.ingestMetadata = new HashMap<>();
@@ -527,8 +532,7 @@ public final class IngestDocument {
 
     private static void appendValues(List<Object> list, Object value) {
         if (value instanceof List) {
-            List<?> valueList = (List<?>) value;
-            valueList.stream().forEach(list::add);
+            list.addAll((List<?>) value);
         } else {
             list.add(value);
         }
@@ -562,10 +566,21 @@ public final class IngestDocument {
      * one time operation that extracts the metadata fields from the ingest document and returns them.
      * Metadata fields that used to be accessible as ordinary top level fields will be removed as part of this call.
      */
-    public Map<MetaData, Object> extractMetadata() {
-        Map<MetaData, Object> metadataMap = new EnumMap<>(MetaData.class);
-        for (MetaData metaData : MetaData.values()) {
-            metadataMap.put(metaData, sourceAndMetadata.remove(metaData.getFieldName()));
+    public Map<Metadata, Object> extractMetadata() {
+        Map<Metadata, Object> metadataMap = new EnumMap<>(Metadata.class);
+        for (Metadata metadata : Metadata.values()) {
+            metadataMap.put(metadata, sourceAndMetadata.remove(metadata.getFieldName()));
+        }
+        return metadataMap;
+    }
+
+    /**
+     * Does the same thing as {@link #extractMetadata} but does not mutate the map.
+     */
+    public Map<Metadata, Object> getMetadata() {
+        Map<Metadata, Object> metadataMap = new EnumMap<>(Metadata.class);
+        for (Metadata metadata : Metadata.values()) {
+            metadataMap.put(metadata, sourceAndMetadata.get(metadata.getFieldName()));
         }
         return metadataMap;
     }
@@ -588,7 +603,7 @@ public final class IngestDocument {
     }
 
     @SuppressWarnings("unchecked")
-    private static <K, V> Map<K, V> deepCopyMap(Map<K, V> source) {
+    public static <K, V> Map<K, V> deepCopyMap(Map<K, V> source) {
         return (Map<K, V>) deepCopy(source);
     }
 
@@ -622,6 +637,39 @@ public final class IngestDocument {
         }
     }
 
+    /**
+     * Executes the given pipeline with for this document unless the pipeline has already been executed
+     * for this document.
+     *
+     * @param pipeline the pipeline to execute
+     * @param handler handles the result or failure
+     */
+    public void executePipeline(Pipeline pipeline, BiConsumer<IngestDocument, Exception> handler) {
+        if (executedPipelines.add(pipeline.getId())) {
+            Object previousPipeline = ingestMetadata.put("pipeline", pipeline.getId());
+            pipeline.execute(this, (result, e) -> {
+                executedPipelines.remove(pipeline.getId());
+                if (previousPipeline != null) {
+                    ingestMetadata.put("pipeline", previousPipeline);
+                } else {
+                    ingestMetadata.remove("pipeline");
+                }
+                handler.accept(result, e);
+            });
+        } else {
+            handler.accept(null, new IllegalStateException("Cycle detected for pipeline: " + pipeline.getId()));
+        }
+    }
+
+    /**
+     * @return a pipeline stack; all pipelines that are in execution by this document in reverse order
+     */
+    List<String> getPipelineStack() {
+        List<String> pipelineStack = new ArrayList<>(executedPipelines);
+        Collections.reverse(pipelineStack);
+        return pipelineStack;
+    }
+
     @Override
     public boolean equals(Object obj) {
         if (obj == this) { return true; }
@@ -647,9 +695,8 @@ public final class IngestDocument {
                 '}';
     }
 
-    public enum MetaData {
+    public enum Metadata {
         INDEX(IndexFieldMapper.NAME),
-        TYPE(TypeFieldMapper.NAME),
         ID(IdFieldMapper.NAME),
         ROUTING(RoutingFieldMapper.NAME),
         VERSION(VersionFieldMapper.NAME),
@@ -657,7 +704,7 @@ public final class IngestDocument {
 
         private final String fieldName;
 
-        MetaData(String fieldName) {
+        Metadata(String fieldName) {
             this.fieldName = fieldName;
         }
 

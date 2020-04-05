@@ -18,6 +18,7 @@
  */
 package org.elasticsearch.action.termvectors;
 
+import org.apache.lucene.analysis.MockTokenizer;
 import org.apache.lucene.analysis.TokenFilter;
 import org.apache.lucene.analysis.TokenStream;
 import org.apache.lucene.analysis.payloads.FloatEncoder;
@@ -35,6 +36,7 @@ import org.apache.lucene.util.BytesRef;
 import org.elasticsearch.ElasticsearchException;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.common.xcontent.XContentBuilder;
+import org.elasticsearch.index.analysis.PreConfiguredTokenizer;
 import org.elasticsearch.index.analysis.TokenFilterFactory;
 import org.elasticsearch.indices.analysis.AnalysisModule;
 import org.elasticsearch.plugins.AnalysisPlugin;
@@ -93,6 +95,12 @@ public class GetTermVectorsTests extends ESSingleNodeTestCase {
             });
         }
 
+        @Override
+        public List<PreConfiguredTokenizer> getPreConfiguredTokenizers() {
+            return Collections.singletonList(PreConfiguredTokenizer.singleton("mock-whitespace",
+                () -> new MockTokenizer(MockTokenizer.WHITESPACE, false)));
+        }
+
         // Based on DelimitedPayloadTokenFilter:
         final class MockPayloadTokenFilter extends TokenFilter {
             private final char delimiter;
@@ -147,21 +155,21 @@ public class GetTermVectorsTests extends ESSingleNodeTestCase {
         String delimiter = createRandomDelimiter(tokens);
         String queryString = createString(tokens, payloads, encoding, delimiter.charAt(0));
         //create the mapping
-        XContentBuilder mapping = jsonBuilder().startObject().startObject("type1").startObject("properties")
+        XContentBuilder mapping = jsonBuilder().startObject().startObject("_doc").startObject("properties")
                 .startObject("field").field("type", "text").field("term_vector", "with_positions_offsets_payloads")
                 .field("analyzer", "payload_test").endObject().endObject().endObject().endObject();
         Settings setting =  Settings.builder()
-            .put("index.analysis.analyzer.payload_test.tokenizer", "whitespace")
+            .put("index.analysis.analyzer.payload_test.tokenizer", "mock-whitespace")
             .putList("index.analysis.analyzer.payload_test.filter", "my_delimited_payload")
             .put("index.analysis.filter.my_delimited_payload.delimiter", delimiter)
             .put("index.analysis.filter.my_delimited_payload.encoding", encodingString)
             .put("index.analysis.filter.my_delimited_payload.type", "mock_payload_filter").build();
-        createIndex("test", setting, "type1", mapping);
+        createIndex("test", setting, mapping);
 
-        client().prepareIndex("test", "type1", Integer.toString(1))
+        client().prepareIndex("test").setId(Integer.toString(1))
                 .setSource(jsonBuilder().startObject().field("field", queryString).endObject()).execute().actionGet();
         client().admin().indices().prepareRefresh().get();
-        TermVectorsRequestBuilder resp = client().prepareTermVectors("test", "type1", Integer.toString(1))
+        TermVectorsRequestBuilder resp = client().prepareTermVectors("test", Integer.toString(1))
                 .setPayloads(true).setOffsets(true).setPositions(true).setSelectedFields();
         TermVectorsResponse response = resp.execute().actionGet();
         assertThat("doc id 1 doesn't exists but should", response.isExists(), equalTo(true));

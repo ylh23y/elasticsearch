@@ -29,7 +29,7 @@ public class SmokeTestPluginsSslClientYamlTestSuiteIT extends ESClientYamlSuiteT
 
     private static final String USER = "test_user";
     private static final String PASS = "x-pack-test-password";
-    private static final String KEYSTORE_PASS = "keypass";
+    private static final String KEYSTORE_PASS = "testnode";
 
     public SmokeTestPluginsSslClientYamlTestSuiteIT(@Name("yaml") ClientYamlTestCandidate testCandidate) {
         super(testCandidate);
@@ -43,9 +43,14 @@ public class SmokeTestPluginsSslClientYamlTestSuiteIT extends ESClientYamlSuiteT
     static Path keyStore;
 
     @BeforeClass
+    public static void muteInFips() {
+        assumeFalse("https://github.com/elastic/elasticsearch/issues/49094", inFipsJvm());
+    }
+
+    @BeforeClass
     public static void getKeyStore() {
       try {
-          keyStore = PathUtils.get(SmokeTestPluginsSslClientYamlTestSuiteIT.class.getResource("/test-node.jks").toURI());
+          keyStore = PathUtils.get(SmokeTestPluginsSslClientYamlTestSuiteIT.class.getResource("/testnode.jks").toURI());
       } catch (URISyntaxException e) {
           throw new ElasticsearchException("exception while reading the store", e);
       }

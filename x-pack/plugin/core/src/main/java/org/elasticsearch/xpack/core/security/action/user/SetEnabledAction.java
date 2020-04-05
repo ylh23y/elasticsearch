@@ -5,28 +5,17 @@
  */
 package org.elasticsearch.xpack.core.security.action.user;
 
-import org.elasticsearch.action.Action;
-import org.elasticsearch.client.ElasticsearchClient;
+import org.elasticsearch.action.ActionType;
 
 /**
  * This action is for setting the enabled flag on a native or reserved user
  */
-public class SetEnabledAction extends Action<SetEnabledRequest, SetEnabledResponse, SetEnabledRequestBuilder> {
+public class SetEnabledAction extends ActionType<SetEnabledResponse> {
 
     public static final SetEnabledAction INSTANCE = new SetEnabledAction();
     public static final String NAME = "cluster:admin/xpack/security/user/set_enabled";
 
     private SetEnabledAction() {
-        super(NAME);
-    }
-
-    @Override
-    public SetEnabledRequestBuilder newRequestBuilder(ElasticsearchClient client) {
-        return new SetEnabledRequestBuilder(client);
-    }
-
-    @Override
-    public SetEnabledResponse newResponse() {
-        return new SetEnabledResponse();
+        super(NAME, SetEnabledResponse::new);
     }
 }

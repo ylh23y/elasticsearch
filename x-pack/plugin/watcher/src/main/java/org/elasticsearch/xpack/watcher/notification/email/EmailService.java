@@ -5,18 +5,29 @@
  */
 package org.elasticsearch.xpack.watcher.notification.email;
 
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 import org.elasticsearch.common.Nullable;
 import org.elasticsearch.common.settings.ClusterSettings;
+import org.elasticsearch.common.settings.SecureSetting;
+import org.elasticsearch.common.settings.SecureString;
 import org.elasticsearch.common.settings.Setting;
 import org.elasticsearch.common.settings.Setting.Property;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.common.unit.TimeValue;
+import org.elasticsearch.xpack.core.ssl.SSLConfiguration;
+import org.elasticsearch.xpack.core.ssl.SSLConfigurationSettings;
+import org.elasticsearch.xpack.core.ssl.SSLService;
 import org.elasticsearch.xpack.core.watcher.crypto.CryptoService;
 import org.elasticsearch.xpack.watcher.notification.NotificationService;
 
 import javax.mail.MessagingException;
+import javax.net.ssl.SSLSocketFactory;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+
+import static org.elasticsearch.xpack.core.watcher.WatcherField.EMAIL_NOTIFICATION_SSL_PREFIX;
 
 /**
  * A component to store email credentials and handle sending email notifications.
@@ -59,9 +70,9 @@ public class EmailService extends NotificationService<Account> {
             Setting.affixKeySetting("xpack.notification.email.account.", "smtp.user",
                     (key) -> Setting.simpleString(key, Property.Dynamic, Property.NodeScope));
 
-    private static final Setting.AffixSetting<String> SETTING_SMTP_PASSWORD =
-            Setting.affixKeySetting("xpack.notification.email.account.", "smtp.password",
-                    (key) -> Setting.simpleString(key, Property.Dynamic, Property.NodeScope, Property.Filtered));
+    private static final Setting.AffixSetting<SecureString> SETTING_SECURE_PASSWORD =
+        Setting.affixKeySetting("xpack.notification.email.account.", "smtp.secure_password",
+            (key) -> SecureSetting.secureString(key, null));
 
     private static final Setting.AffixSetting<TimeValue> SETTING_SMTP_TIMEOUT =
             Setting.affixKeySetting("xpack.notification.email.account.", "smtp.timeout",
@@ -79,6 +90,10 @@ public class EmailService extends NotificationService<Account> {
             Setting.affixKeySetting("xpack.notification.email.account.", "smtp.local_address",
                     (key) -> Setting.simpleString(key, Property.Dynamic, Property.NodeScope));
 
+    private static final Setting.AffixSetting<String> SETTING_SMTP_SSL_TRUST_ADDRESS =
+            Setting.affixKeySetting("xpack.notification.email.account.", "smtp.ssl.trust",
+                    (key) -> Setting.simpleString(key, Property.Dynamic, Property.NodeScope));
+
     private static final Setting.AffixSetting<Integer> SETTING_SMTP_LOCAL_PORT =
             Setting.affixKeySetting("xpack.notification.email.account.", "smtp.local_port",
                     (key) -> Setting.intSetting(key, 25, Property.Dynamic, Property.NodeScope));
@@ -91,12 +106,17 @@ public class EmailService extends NotificationService<Account> {
             Setting.affixKeySetting("xpack.notification.email.account.", "smtp.wait_on_quit",
                     (key) -> Setting.boolSetting(key, true, Property.Dynamic, Property.NodeScope));
 
-    private final CryptoService cryptoService;
+    private static final SSLConfigurationSettings SSL_SETTINGS = SSLConfigurationSettings.withPrefix(EMAIL_NOTIFICATION_SSL_PREFIX);
 
-    public EmailService(Settings settings, @Nullable CryptoService cryptoService, ClusterSettings clusterSettings) {
-        super(settings, "email");
+    private static final Logger logger = LogManager.getLogger(EmailService.class);
+
+    private final CryptoService cryptoService;
+    private final SSLService sslService;
+
+    public EmailService(Settings settings, @Nullable CryptoService cryptoService, SSLService sslService, ClusterSettings clusterSettings) {
+        super("email", settings, clusterSettings, EmailService.getDynamicSettings(), EmailService.getSecureSettings());
         this.cryptoService = cryptoService;
-        clusterSettings.addSettingsUpdateConsumer(this::setAccountSetting, getSettings());
+        this.sslService = sslService;
         // ensure logging of setting changes
         clusterSettings.addSettingsUpdateConsumer(SETTING_DEFAULT_ACCOUNT, (s) -> {});
         clusterSettings.addAffixUpdateConsumer(SETTING_PROFILE, (s, o) -> {}, (s, o) -> {});
@@ -107,22 +127,31 @@ public class EmailService extends NotificationService<Account> {
         clusterSettings.addAffixUpdateConsumer(SETTING_SMTP_HOST, (s, o) -> {}, (s, o) -> {});
         clusterSettings.addAffixUpdateConsumer(SETTING_SMTP_PORT, (s, o) -> {}, (s, o) -> {});
         clusterSettings.addAffixUpdateConsumer(SETTING_SMTP_USER, (s, o) -> {}, (s, o) -> {});
-        clusterSettings.addAffixUpdateConsumer(SETTING_SMTP_PASSWORD, (s, o) -> {}, (s, o) -> {});
         clusterSettings.addAffixUpdateConsumer(SETTING_SMTP_TIMEOUT, (s, o) -> {}, (s, o) -> {});
         clusterSettings.addAffixUpdateConsumer(SETTING_SMTP_CONNECTION_TIMEOUT, (s, o) -> {}, (s, o) -> {});
         clusterSettings.addAffixUpdateConsumer(SETTING_SMTP_WRITE_TIMEOUT, (s, o) -> {}, (s, o) -> {});
+        clusterSettings.addAffixUpdateConsumer(SETTING_SMTP_SSL_TRUST_ADDRESS, (s, o) -> {}, (s, o) -> {});
         clusterSettings.addAffixUpdateConsumer(SETTING_SMTP_LOCAL_ADDRESS, (s, o) -> {}, (s, o) -> {});
         clusterSettings.addAffixUpdateConsumer(SETTING_SMTP_LOCAL_PORT, (s, o) -> {}, (s, o) -> {});
         clusterSettings.addAffixUpdateConsumer(SETTING_SMTP_SEND_PARTIAL, (s, o) -> {}, (s, o) -> {});
         clusterSettings.addAffixUpdateConsumer(SETTING_SMTP_WAIT_ON_QUIT, (s, o) -> {}, (s, o) -> {});
         // do an initial load
-        setAccountSetting(settings);
+        reload(settings);
     }
 
     @Override
     protected Account createAccount(String name, Settings accountSettings) {
-        Account.Config config = new Account.Config(name, accountSettings);
+        Account.Config config = new Account.Config(name, accountSettings, getSmtpSslSocketFactory());
         return new Account(config, cryptoService, logger);
+    }
+
+    @Nullable
+    private SSLSocketFactory getSmtpSslSocketFactory() {
+        final SSLConfiguration sslConfiguration = sslService.getSSLConfiguration(EMAIL_NOTIFICATION_SSL_PREFIX);
+        if (sslConfiguration == null) {
+            return null;
+        }
+        return sslService.sslSocketFactory(sslConfiguration);
     }
 
     public EmailSent send(Email email, Authentication auth, Profile profile, String accountName) throws MessagingException {
@@ -164,11 +193,22 @@ public class EmailService extends NotificationService<Account> {
         }
     }
 
-    public static List<Setting<?>> getSettings() {
+    private static List<Setting<?>> getDynamicSettings() {
         return Arrays.asList(SETTING_DEFAULT_ACCOUNT, SETTING_PROFILE, SETTING_EMAIL_DEFAULTS, SETTING_SMTP_AUTH, SETTING_SMTP_HOST,
-                SETTING_SMTP_PASSWORD, SETTING_SMTP_PORT, SETTING_SMTP_STARTTLS_ENABLE, SETTING_SMTP_USER, SETTING_SMTP_STARTTLS_REQUIRED,
+                SETTING_SMTP_PORT, SETTING_SMTP_STARTTLS_ENABLE, SETTING_SMTP_USER, SETTING_SMTP_STARTTLS_REQUIRED,
                 SETTING_SMTP_TIMEOUT, SETTING_SMTP_CONNECTION_TIMEOUT, SETTING_SMTP_WRITE_TIMEOUT, SETTING_SMTP_LOCAL_ADDRESS,
-                SETTING_SMTP_LOCAL_PORT, SETTING_SMTP_SEND_PARTIAL, SETTING_SMTP_WAIT_ON_QUIT);
+                SETTING_SMTP_LOCAL_PORT, SETTING_SMTP_SEND_PARTIAL, SETTING_SMTP_WAIT_ON_QUIT, SETTING_SMTP_SSL_TRUST_ADDRESS);
+    }
+
+    private static List<Setting<?>> getSecureSettings() {
+        return Arrays.asList(SETTING_SECURE_PASSWORD);
+    }
+
+    public static List<Setting<?>> getSettings() {
+        List<Setting<?>> allSettings = new ArrayList<Setting<?>>(EmailService.getDynamicSettings());
+        allSettings.addAll(EmailService.getSecureSettings());
+        allSettings.addAll(SSL_SETTINGS.getAllSettings());
+        return allSettings;
     }
 
 }

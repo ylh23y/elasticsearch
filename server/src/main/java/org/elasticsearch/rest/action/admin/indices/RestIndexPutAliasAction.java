@@ -22,35 +22,34 @@ import org.elasticsearch.action.admin.indices.alias.IndicesAliasesRequest;
 import org.elasticsearch.action.admin.indices.alias.IndicesAliasesRequest.AliasActions;
 import org.elasticsearch.client.node.NodeClient;
 import org.elasticsearch.common.Strings;
-import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.common.xcontent.XContentParser;
 import org.elasticsearch.rest.BaseRestHandler;
-import org.elasticsearch.rest.RestController;
 import org.elasticsearch.rest.RestRequest;
 import org.elasticsearch.rest.action.RestToXContentListener;
 
 import java.io.IOException;
+import java.util.List;
 import java.util.Map;
 
 import static org.elasticsearch.rest.RestRequest.Method.POST;
 import static org.elasticsearch.rest.RestRequest.Method.PUT;
 
 public class RestIndexPutAliasAction extends BaseRestHandler {
-    public RestIndexPutAliasAction(Settings settings, RestController controller) {
-        super(settings);
-        controller.registerHandler(PUT, "/{index}/_alias/{name}", this);
-        controller.registerHandler(PUT, "/_alias/{name}", this);
-        controller.registerHandler(PUT, "/{index}/_aliases/{name}", this);
-        controller.registerHandler(PUT, "/_aliases/{name}", this);
-        controller.registerHandler(PUT, "/{index}/_alias", this);
-        controller.registerHandler(PUT, "/_alias", this);
 
-        controller.registerHandler(POST, "/{index}/_alias/{name}", this);
-        controller.registerHandler(POST, "/_alias/{name}", this);
-        controller.registerHandler(POST, "/{index}/_aliases/{name}", this);
-        controller.registerHandler(POST, "/_aliases/{name}", this);
-        controller.registerHandler(PUT, "/{index}/_aliases", this);
-        //we cannot add POST for "/_aliases" because this is the _aliases api already defined in RestIndicesAliasesAction
+    @Override
+    public List<Route> routes() {
+        return List.of(
+            new Route(POST, "/{index}/_alias/{name}"),
+            new Route(PUT, "/{index}/_alias/{name}"),
+            new Route(POST, "/_alias/{name}"),
+            new Route(PUT, "/_alias/{name}"),
+            new Route(POST, "/{index}/_aliases/{name}"),
+            new Route(PUT, "/{index}/_aliases/{name}"),
+            new Route(POST, "/_aliases/{name}"),
+            new Route(PUT, "/_aliases/{name}"),
+            new Route(PUT, "/{index}/_alias"),
+            new Route(PUT, "/{index}/_aliases"),
+            new Route(PUT, "/_alias"));
     }
 
     @Override
@@ -66,6 +65,7 @@ public class RestIndexPutAliasAction extends BaseRestHandler {
         String routing = null;
         String indexRouting = null;
         String searchRouting = null;
+        Boolean writeIndex = null;
 
         if (request.hasContent()) {
             try (XContentParser parser = request.contentParser()) {
@@ -90,6 +90,8 @@ public class RestIndexPutAliasAction extends BaseRestHandler {
                         } else if ("searchRouting".equals(currentFieldName)
                                 || "search-routing".equals(currentFieldName) || "search_routing".equals(currentFieldName)) {
                             searchRouting = parser.textOrNull();
+                        } else if ("is_write_index".equals(currentFieldName)) {
+                            writeIndex = parser.booleanValue();
                         }
                     } else if (token == XContentParser.Token.START_OBJECT) {
                         if ("filter".equals(currentFieldName)) {
@@ -116,6 +118,9 @@ public class RestIndexPutAliasAction extends BaseRestHandler {
         }
         if (filter != null) {
             aliasAction.filter(filter);
+        }
+        if (writeIndex != null) {
+            aliasAction.writeIndex(writeIndex);
         }
         indicesAliasesRequest.addAliasAction(aliasAction);
         return channel -> client.admin().indices().aliases(indicesAliasesRequest, new RestToXContentListener<>(channel));

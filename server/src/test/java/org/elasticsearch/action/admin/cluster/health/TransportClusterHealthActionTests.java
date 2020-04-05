@@ -20,10 +20,11 @@
 package org.elasticsearch.action.admin.cluster.health;
 
 import org.elasticsearch.Version;
+import org.elasticsearch.action.support.ActiveShardCount;
 import org.elasticsearch.cluster.ClusterName;
 import org.elasticsearch.cluster.ClusterState;
-import org.elasticsearch.cluster.metadata.IndexMetaData;
-import org.elasticsearch.cluster.metadata.MetaData;
+import org.elasticsearch.cluster.metadata.IndexMetadata;
+import org.elasticsearch.cluster.metadata.Metadata;
 import org.elasticsearch.cluster.routing.IndexRoutingTable;
 import org.elasticsearch.cluster.routing.RoutingTable;
 import org.elasticsearch.cluster.routing.ShardRoutingState;
@@ -61,8 +62,22 @@ public class TransportClusterHealthActionTests extends ESTestCase {
         assertThat(TransportClusterHealthAction.prepareResponse(request, response, clusterState, null), equalTo(0));
     }
 
+    public void testWaitForAllShards() {
+        final String[] indices = {"test"};
+        final ClusterHealthRequest request = new ClusterHealthRequest();
+        request.waitForActiveShards(ActiveShardCount.ALL);
+
+        ClusterState clusterState = randomClusterStateWithInitializingShards("test", 1);
+        ClusterHealthResponse response = new ClusterHealthResponse("", indices, clusterState);
+        assertThat(TransportClusterHealthAction.prepareResponse(request, response, clusterState, null), equalTo(0));
+
+        clusterState = ClusterState.builder(ClusterName.CLUSTER_NAME_SETTING.getDefault(Settings.EMPTY)).build();
+        response = new ClusterHealthResponse("", indices, clusterState);
+        assertThat(TransportClusterHealthAction.prepareResponse(request, response, clusterState, null), equalTo(1));
+    }
+
     ClusterState randomClusterStateWithInitializingShards(String index, final int initializingShards) {
-        final IndexMetaData indexMetaData = IndexMetaData
+        final IndexMetadata indexMetadata = IndexMetadata
             .builder(index)
             .settings(settings(Version.CURRENT))
             .numberOfShards(between(1, 10))
@@ -76,7 +91,7 @@ public class TransportClusterHealthActionTests extends ESTestCase {
         Randomness.shuffle(shardRoutingStates);
 
         final ShardId shardId = new ShardId(new Index("index", "uuid"), 0);
-        final IndexRoutingTable.Builder routingTable = new IndexRoutingTable.Builder(indexMetaData.getIndex());
+        final IndexRoutingTable.Builder routingTable = new IndexRoutingTable.Builder(indexMetadata.getIndex());
 
         // Primary
         {
@@ -95,7 +110,7 @@ public class TransportClusterHealthActionTests extends ESTestCase {
         }
 
         return ClusterState.builder(ClusterName.CLUSTER_NAME_SETTING.getDefault(Settings.EMPTY))
-            .metaData(MetaData.builder().put(indexMetaData, true))
+            .metadata(Metadata.builder().put(indexMetadata, true))
             .routingTable(RoutingTable.builder().add(routingTable.build()).build())
             .build();
     }

@@ -23,6 +23,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.nio.file.FileAlreadyExistsException;
 import java.nio.file.NoSuchFileException;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -36,15 +37,6 @@ public interface BlobContainer {
      * @return  the BlobPath where the blobs are contained
      */
     BlobPath path();
-
-    /**
-     * Tests whether a blob with the given blob name exists in the container.
-     *
-     * @param   blobName
-     *          The name of the blob whose existence is to be determined.
-     * @return  {@code true} if a blob exists in the {@link BlobContainer} with the given name, and {@code false} otherwise.
-     */
-    boolean blobExists(String blobName);
 
     /**
      * Creates a new {@link InputStream} for the given blob name.
@@ -69,45 +61,69 @@ public interface BlobContainer {
      * @param   blobSize
      *          The size of the blob to be written, in bytes.  It is implementation dependent whether
      *          this value is used in writing the blob to the repository.
-     * @throws  FileAlreadyExistsException if a blob by the same name already exists
+     * @param   failIfAlreadyExists
+     *          whether to throw a FileAlreadyExistsException if the given blob already exists
+     * @throws  FileAlreadyExistsException if failIfAlreadyExists is true and a blob by the same name already exists
      * @throws  IOException if the input stream could not be read, or the target blob could not be written to.
      */
-    void writeBlob(String blobName, InputStream inputStream, long blobSize) throws IOException;
+    void writeBlob(String blobName, InputStream inputStream, long blobSize, boolean failIfAlreadyExists) throws IOException;
 
     /**
-     * Deletes a blob with giving name, if the blob exists. If the blob does not exist,
-     * this method throws a NoSuchFileException.
+     * Reads blob content from the input stream and writes it to the container in a new blob with the given name,
+     * using an atomic write operation if the implementation supports it.
+     *
+     * This method assumes the container does not already contain a blob of the same blobName.  If a blob by the
+     * same name already exists, the operation will fail and an {@link IOException} will be thrown.
      *
      * @param   blobName
-     *          The name of the blob to delete.
-     * @throws  NoSuchFileException if the blob does not exist
-     * @throws  IOException if the blob exists but could not be deleted.
+     *          The name of the blob to write the contents of the input stream to.
+     * @param   inputStream
+     *          The input stream from which to retrieve the bytes to write to the blob.
+     * @param   blobSize
+     *          The size of the blob to be written, in bytes.  It is implementation dependent whether
+     *          this value is used in writing the blob to the repository.
+     * @param   failIfAlreadyExists
+     *          whether to throw a FileAlreadyExistsException if the given blob already exists
+     * @throws  FileAlreadyExistsException if failIfAlreadyExists is true and a blob by the same name already exists
+     * @throws  IOException if the input stream could not be read, or the target blob could not be written to.
      */
-    void deleteBlob(String blobName) throws IOException;
+    void writeBlobAtomic(String blobName, InputStream inputStream, long blobSize, boolean failIfAlreadyExists) throws IOException;
 
     /**
-     * Deletes a blob with giving name, ignoring if the blob does not exist.
+     * Deletes this container and all its contents from the repository.
      *
-     * @param   blobName
-     *          The name of the blob to delete.
-     * @throws  IOException if the blob exists but could not be deleted.
+     * @return delete result
+     * @throws IOException on failure
      */
-    default void deleteBlobIgnoringIfNotExists(String blobName) throws IOException {
-        try {
-            deleteBlob(blobName);
-        } catch (final NoSuchFileException ignored) {
-            // This exception is ignored
-        }
-    }
+    DeleteResult delete() throws IOException;
+
+    /**
+     * Deletes the blobs with given names. This method will not throw an exception
+     * when one or multiple of the given blobs don't exist and simply ignore this case.
+     *
+     * @param   blobNames  The names of the blob to delete.
+     * @throws  IOException if a subset of blob exists but could not be deleted.
+     */
+    void deleteBlobsIgnoringIfNotExists(List<String> blobNames) throws IOException;
 
     /**
      * Lists all blobs in the container.
      *
      * @return  A map of all the blobs in the container.  The keys in the map are the names of the blobs and
-     *          the values are {@link BlobMetaData}, containing basic information about each blob.
+     *          the values are {@link BlobMetadata}, containing basic information about each blob.
      * @throws  IOException if there were any failures in reading from the blob container.
      */
-    Map<String, BlobMetaData> listBlobs() throws IOException;
+    Map<String, BlobMetadata> listBlobs() throws IOException;
+
+    /**
+     * Lists all child containers under this container. A child container is defined as a container whose {@link #path()} method returns
+     * a path that has this containers {@link #path()} return as its prefix and has one more path element than the current
+     * container's path.
+     *
+     * @return Map of name of the child container to child container
+     * @throws IOException on failure to list child containers
+     */
+    Map<String, BlobContainer> children() throws IOException;
 
     /**
      * Lists all blobs in the container that match the specified prefix.
@@ -115,24 +131,8 @@ public interface BlobContainer {
      * @param   blobNamePrefix
      *          The prefix to match against blob names in the container.
      * @return  A map of the matching blobs in the container.  The keys in the map are the names of the blobs
-     *          and the values are {@link BlobMetaData}, containing basic information about each blob.
+     *          and the values are {@link BlobMetadata}, containing basic information about each blob.
      * @throws  IOException if there were any failures in reading from the blob container.
      */
-    Map<String, BlobMetaData> listBlobsByPrefix(String blobNamePrefix) throws IOException;
-
-    /**
-     * Renames the source blob into the target blob.  If the source blob does not exist or the
-     * target blob already exists, an exception is thrown.  Atomicity of the move operation
-     * can only be guaranteed on an implementation-by-implementation basis.  The only current
-     * implementation of {@link BlobContainer} for which atomicity can be guaranteed is the
-     * {@link org.elasticsearch.common.blobstore.fs.FsBlobContainer}.
-     *
-     * @param   sourceBlobName
-     *          The blob to rename.
-     * @param   targetBlobName
-     *          The name of the blob after the renaming.
-     * @throws  IOException if the source blob does not exist, the target blob already exists,
-     *          or there were any failures in reading from the blob container.
-     */
-    void move(String sourceBlobName, String targetBlobName) throws IOException;
+    Map<String, BlobMetadata> listBlobsByPrefix(String blobNamePrefix) throws IOException;
 }

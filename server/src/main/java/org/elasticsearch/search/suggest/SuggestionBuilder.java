@@ -27,7 +27,6 @@ import org.elasticsearch.common.io.stream.NamedWriteable;
 import org.elasticsearch.common.io.stream.StreamInput;
 import org.elasticsearch.common.io.stream.StreamOutput;
 import org.elasticsearch.common.lucene.BytesRefs;
-import org.elasticsearch.common.xcontent.ToXContent.Params;
 import org.elasticsearch.common.xcontent.ToXContentFragment;
 import org.elasticsearch.common.xcontent.XContentBuilder;
 import org.elasticsearch.common.xcontent.XContentParser;
@@ -303,7 +302,7 @@ public abstract class SuggestionBuilder<T extends SuggestionBuilder<T>> implemen
 
         Objects.requireNonNull(field, "field must not be null");
 
-        MappedFieldType fieldType = mapperService.fullName(field);
+        MappedFieldType fieldType = mapperService.fieldType(field);
         if (fieldType == null) {
             throw new IllegalArgumentException("no mapping found for field [" + field + "]");
         } else if (analyzer == null) {
@@ -321,7 +320,7 @@ public abstract class SuggestionBuilder<T extends SuggestionBuilder<T>> implemen
             suggestionContext.setAnalyzer(luceneAnalyzer);
         }
 
-        suggestionContext.setField(field);
+        suggestionContext.setField(fieldType.name());
 
         if (size != null) {
             suggestionContext.setSize(size);
